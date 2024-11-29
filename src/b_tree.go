@@ -9,6 +9,18 @@ type BNode struct {
 	data []byte // Dumpable to disk
 }
 
+/// BNode Structure
+// Pointers - A list of pointers to the child nodes. (Used by internal nodes).
+// Offsets -  A list of offsets pointing to each key-value pair.
+// +--------+-------+-----------+---------+--------------------+
+// | type   | nkeys | pointers  | offsets  | key-values |
+// | 2B     | 2B    | nkeys*8B  | nkeys*2B | ...        |
+// |<-HEADER (4B) ->|
+
+// Format of KV pair
+// | klen | vlen | key | val |
+// | 2B   | 2B   | ... | ... | 
+
 type BTree struct {
 	// a pointer (a non-zero page number)
 	root uint64
@@ -35,7 +47,9 @@ func (tree *BTree) Insert(key, val []byte) {
 	}
 	node := tree.get(tree.root)
 	tree.del(tree.root)
+	// Inserts the KV pair & returns the node
 	node = treeInsert(tree, node, key, val)
+	// If the updated node is big we split it
 	nsplit, splitted := nodeSplit3(node)
 	if nsplit > 1 {
 		root := BNode{data: make([]byte, BTREE_PAGE_SIZE)}
@@ -56,8 +70,8 @@ func (tree *BTree) Delete(key []byte) bool {
 	if tree.root == 0 {
 		return false
 	}
-	// Gives the us the *new* node after deleting the key
-	updated := treeDelete(tree, tree.get((tree.root)), key)
+	// Gives the us the new updated node after deleting the key
+	updated := treeDelete(tree, tree.get(tree.root), key)
 	if len(updated.data) == 0 {
 		return false
 	}
@@ -95,17 +109,6 @@ func (tree *BTree) Get(key []byte) ([]byte, bool) {
 		}
 	}
 }
-
-// Pointers - A list of pointers to the child nodes. (Used by internal nodes).
-// Offsets -  A list of offsets pointing to each key-value pair.
-// +--------+-------+-----------+---------+--------------------+
-// | type   | nkeys | pointers  | offsets  | key-values |
-// | 2B     | 2B    | nkeys*8B  | nkeys*2B | ...        |
-// |<-HEADER (4B) ->|
-
-// Format of KV pair
-// | klen | vlen | key | val |
-// | 2B   | 2B   | ... | ... |
 
 const HEADER = 4
 

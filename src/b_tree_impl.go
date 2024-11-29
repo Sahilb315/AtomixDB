@@ -1,7 +1,10 @@
 package src
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"strings"
 	"unsafe"
 )
 
@@ -51,24 +54,68 @@ func (db *DB) del(key string) bool {
 	return db.tree.Delete([]byte(key))
 }
 
+func (db *DB) get(key string) ([]byte, bool) {
+	return db.tree.Get([]byte(key))
+}
+
 func BtreeImpl() {
+	scanner := bufio.NewReader(os.Stdin)
 	db := newDB()
-	db.add("Name", "Aniket")
-	db.add("Company", "Amazon")
-	if val, ok := db.tree.Get([]byte("Name")); ok {
-		fmt.Println("Name is: ", string(val))
-	}
-	if val, ok := db.tree.Get([]byte("Company")); ok {
-		fmt.Println("Company is: ", string(val))
-	}
-	db.add("Name", "Joseph")
-	if val, ok := db.tree.Get([]byte("Name")); ok {
-		fmt.Println("Updated Name is: ", string(val))
-	}
-	db.del("Name")
-	if val, ok := db.tree.Get([]byte("Name")); ok {
-		fmt.Println("Name is: ", string(val))
-	} else {
-		fmt.Println("Key not found")
+
+	fmt.Println("Welcome to AtomixDB")
+	fmt.Println("Available Commands:")
+	fmt.Println("  add   - Add a key-value pair")
+	fmt.Println("  del   - Delete a key")
+	fmt.Println("  get   - Retrieve the value for a key")
+	fmt.Println("  exit  - Exit the program")
+	fmt.Println()
+
+	for {
+		fmt.Print("> ") // Display prompt
+		line, _, err := scanner.ReadLine()
+		if err != nil {
+			fmt.Println("Error reading input:", err)
+			continue
+		}
+
+		command := strings.TrimSpace(string(line))
+		switch command {
+		case "add":
+			fmt.Print("Enter key: ")
+			key, _ := scanner.ReadString('\n')
+			key = strings.TrimSpace(key)
+
+			fmt.Print("Enter value: ")
+			val, _ := scanner.ReadString('\n')
+			val = strings.TrimSpace(val)
+
+			db.add(key, val)
+
+		case "del":
+			fmt.Print("Enter key: ")
+			key, _ := scanner.ReadString('\n')
+			key = strings.TrimSpace(key)
+
+			db.del(key)
+
+		case "get":
+			fmt.Print("Enter key: ")
+			key, _ := scanner.ReadString('\n')
+			key = strings.TrimSpace(key)
+
+			val, found := db.get(key)
+			if found {
+				fmt.Println("Value:", string(val))
+			} else {
+				fmt.Println("Key not found")
+			}
+
+		case "exit":
+			fmt.Println("Exiting...")
+			os.Exit(0)
+
+		default:
+			fmt.Println("Unknown command:", command)
+		}
 	}
 }
