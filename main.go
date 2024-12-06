@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	src.BtreeImpl()
+	src.StoreImpl()
 }
 
 // Issues -
