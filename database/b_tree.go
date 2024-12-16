@@ -1,4 +1,4 @@
-package src
+package database
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ type BNode struct {
 
 // Format of KV pair
 // | klen | vlen | key | val |
-// | 2B   | 2B   | ... | ... | 
+// | 2B   | 2B   | ... | ... |
 
 type BTree struct {
 	// a pointer (a non-zero page number)
@@ -91,7 +91,6 @@ func (tree *BTree) Get(key []byte) ([]byte, bool) {
 	if tree.root == 0 {
 		return nil, false
 	}
-
 	node := tree.get(tree.root)
 	for {
 		switch node.bNodeType() {

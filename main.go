@@ -1,14 +1,14 @@
 package main
 
 import (
-	"atomixDB/src"
+	"atomixDB/database"
 	"fmt"
 	"math/rand"
 	"os"
 )
 
 func main() {
-	src.StoreImpl()
+	database.StoreImpl()
 }
 
 // Issues -

@@ -1,4 +1,4 @@
-package src
+package database
 
 import (
 	"encoding/binary"
@@ -75,7 +75,7 @@ func (fl *FreeList) Update(popn int, freed []uint64) {
 	if popn == 0 || len(freed) == 0 {
 		return // no change to be done
 	}
-	
+
 	total := fl.Total()
 	reuse := []uint64{} // construct the new list
 

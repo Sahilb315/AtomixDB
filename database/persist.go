@@ -1,4 +1,4 @@
-package src
+package database
 
 import (
 	"bytes"
@@ -134,6 +134,9 @@ func writePages(db *KV) error {
 			copy(pageGetMapped(db, ptr).data, page)
 		}
 	}
+	for _, v := range db.page.updates {
+		fmt.Println(string(v))	
+	}
 	return nil
 }
 
@@ -162,22 +165,22 @@ func masterLoad(db *KV) error {
 
 	data := db.mmap.chunks[0]
 	root := binary.LittleEndian.Uint64(data[8:])
-	pageUsed := binary.LittleEndian.Uint64(data[16:])
+	pagesUsed := binary.LittleEndian.Uint64(data[16:])
 	freeListPtr := binary.LittleEndian.Uint64(data[24:])
 
 	if !bytes.Equal([]byte(DB_SIG), data[:8]) {
 		return errors.New("bad signature")
 	}
 
-	isBad := !(pageUsed >= 1 && pageUsed <= uint64(db.mmap.file/BTREE_PAGE_SIZE))
-	isBad = isBad || !(0 <= root && root < pageUsed)
+	isBad := !(pagesUsed >= 1 && pagesUsed <= uint64(db.mmap.file/BTREE_PAGE_SIZE))
+	isBad = isBad || !(0 <= root && root < pagesUsed)
 
 	if isBad {
 		return errors.New("bad master page")
 	}
 
 	db.tree.root = root
-	db.page.flushed = pageUsed
+	db.page.flushed = pagesUsed
 	db.free.head = freeListPtr
 	return nil
 }
