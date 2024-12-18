@@ -98,8 +98,12 @@ func (db *KV) Set(key, val []byte) error {
 	return flushPages(db)
 }
 
-func (db *KV) Delete(key []byte) (bool, error) {
-	deleted := db.tree.Delete(key)
+func (db *KV) Delete(req *DeleteReq) (bool, error) {
+	val, _ := db.Get(req.Key)
+	deleted := db.tree.Delete(req.Key)
+	if deleted {
+		req.Old = val
+	}
 	return deleted, flushPages(db)
 }
 
@@ -135,7 +139,7 @@ func writePages(db *KV) error {
 		}
 	}
 	for _, v := range db.page.updates {
-		fmt.Println(string(v))	
+		fmt.Println(string(v))
 	}
 	return nil
 }

@@ -33,12 +33,14 @@ type DB struct {
 }
 
 type TableDef struct {
-	Name  string
-	Types []uint32 // column types
-	Cols  []string // column names
-	PKeys int      // the first `PKeys` columns are the pimary key
-	// auto-assigned B-tree key prefixes for different tables
-	Prefix uint32
+	Name    string
+	Types   []uint32 // column types
+	Cols    []string // column names
+	PKeys   int      // the first `PKeys` columns are the pimary key
+	Indexes [][]string
+	// auto-assigned B-tree key prefixes for different tables/indexes
+	Prefix      uint32
+	IndexPrefix []uint32
 }
 
 // internal table: metadata
@@ -144,6 +146,7 @@ func encodeKey(out []byte, prefix uint32, vals []Value) []byte {
 	out = encodeValues(out, vals)
 	return out
 }
+
 func encodeValues(out []byte, vals []Value) []byte {
 	for _, v := range vals {
 		switch v.Type {

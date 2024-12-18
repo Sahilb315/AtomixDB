@@ -86,7 +86,7 @@ func TestKVOperations(t *testing.T) {
 		}
 
 		// Delete the key
-		deleted, err := db.Delete(key)
+		deleted, err := db.Delete(&DeleteReq{Key: key})
 		if err != nil {
 			t.Fatalf("Failed to delete key: %v", err)
 		}
@@ -148,7 +148,7 @@ func TestKVOperations(t *testing.T) {
 			t.Fatalf("Failed to set key for deletion: %v", err)
 		}
 
-		deleted, err := db.Delete([]byte("key_to_delete"))
+		deleted, err := db.Delete(&DeleteReq{Key: []byte("key_to_delete")})
 		if err != nil {
 			t.Fatalf("Failed to delete key: %v", err)
 		}
