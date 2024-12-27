@@ -35,6 +35,69 @@ func indexOp(db *DB, tdef *TableDef, rec Record, op int) {
 	}
 }
 
+func encodeKeyPartial(
+	out []byte,
+	prefix uint32,
+	values []Value,
+	tdef *TableDef,
+	keys []string,
+	cmp int,
+) []byte {
+	out = encodeKey(out, prefix, values)
+	max := cmp == CMP_GT || cmp == CMP_LE
+
+loop:
+	for i := len(values); max && i < len(keys); i++ {
+		switch tdef.Types[colIndex(tdef, keys[i])] {
+		case TYPE_BYTES:
+			out = append(out, 0xff)
+			//	Any byte string with a prefix of [X, 0xFF] will be greater than all byte strings with prefix [X]
+			break loop
+		case TYPE_INT64:
+			out = append(out, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)
+		default:
+			panic("type mismatch encodeKeyPartial")
+		}
+	}
+	return out
+}
+
+func findIndex(tdef *TableDef, keys []string) (int, error) {
+	pk := tdef.Cols[:tdef.PKeys]
+
+	if isPrefix(pk, keys) {
+		// use primary key
+		return -1, nil
+	}
+
+	// find suitable index
+	winner := -2
+	for i, index := range tdef.Indexes {
+		if !isPrefix(index, keys) {
+			continue
+		}
+		if winner == -2 || len(index) < len(tdef.Indexes[winner]) {
+			winner = i
+		}
+	}
+	if winner == -2 {
+		return -2, fmt.Errorf("no index found")
+	}
+	return winner, nil
+}
+
+func isPrefix(long []string, short []string) bool {
+	if len(long) < len(short) {
+		return false
+	}
+	for i, c := range short {
+		if long[i] != c {
+			return false
+		}
+	}
+	return true
+}
+
 func checkIndexKeys(tdef *TableDef, index []string) ([]string, error) {
 	icols := map[string]bool{}
 

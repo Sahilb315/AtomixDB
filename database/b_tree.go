@@ -70,7 +70,7 @@ func (tree *BTree) Delete(key []byte) bool {
 	if tree.root == 0 {
 		return false
 	}
-	// Gives the us the new updated node after deleting the key
+	// Gives the new updated node after deleting the key
 	updated := treeDelete(tree, tree.get(tree.root), key)
 	if len(updated.data) == 0 {
 		return false

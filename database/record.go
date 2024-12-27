@@ -45,20 +45,24 @@ type TableDef struct {
 
 // internal table: metadata
 var TDEF_META = &TableDef{
-	Prefix: 1,
-	Name:   "@meta",
-	Types:  []uint32{TYPE_BYTES, TYPE_BYTES},
-	Cols:   []string{"key", "val"},
-	PKeys:  1,
+	Name:        "@meta",
+	Types:       []uint32{TYPE_BYTES, TYPE_BYTES},
+	Cols:        []string{"key", "val"},
+	PKeys:       1,
+	Indexes:     make([][]string, 0),
+	Prefix:      1,
+	IndexPrefix: make([]uint32, 0),
 }
 
 // internal table: table schemas
 var TDEF_TABLE = &TableDef{
-	Prefix: 2,
-	Name:   "@table",
-	Types:  []uint32{TYPE_BYTES, TYPE_BYTES},
-	Cols:   []string{"name", "def"},
-	PKeys:  1,
+	Name:        "@table",
+	Types:       []uint32{TYPE_BYTES, TYPE_BYTES},
+	Cols:        []string{"name", "def"},
+	PKeys:       1,
+	Indexes:     make([][]string, 0),
+	Prefix:      2,
+	IndexPrefix: make([]uint32, 0),
 }
 
 func (rec *Record) AddStr(key string, val []byte) *Record {
@@ -66,11 +70,13 @@ func (rec *Record) AddStr(key string, val []byte) *Record {
 	rec.Vals = append(rec.Vals, Value{Type: 2, Str: val})
 	return rec
 }
+
 func (rec *Record) AddInt64(key string, val int64) *Record {
 	rec.Cols = append(rec.Cols, key)
 	rec.Vals = append(rec.Vals, Value{Type: 1, I64: val})
 	return rec
 }
+
 func (rec *Record) Get(key string) *Value {
 	for i, col := range rec.Cols {
 		if key == col {
@@ -89,6 +95,7 @@ func (db *DB) Get(table string, rec *Record) (bool, error) {
 }
 
 func getTableDef(db *DB, name string) *TableDef {
+	fmt.Println("In TableDef for table name: ", name)
 	tdef, ok := db.tables[name]
 	if !ok {
 		if db.tables == nil {
@@ -113,8 +120,12 @@ func getTableDefDB(db *DB, name string) *TableDef {
 		return nil
 	}
 	tdef := &TableDef{}
-	err = json.Unmarshal(rec.Get("def").Str, tdef)
+	// Verify Once
+	if rec.Get("def").Str != nil {
+		err = json.Unmarshal(rec.Get("def").Str, tdef)
+	}
 	if err != nil {
+		fmt.Println("Err while Unmarshal: ", err.Error())
 		return nil
 	}
 	return tdef
@@ -132,7 +143,7 @@ func dbGet(db *DB, tdef *TableDef, rec *Record) (bool, error) {
 		return false, err
 	}
 	if sc.Valid() {
-		sc.Deref(rec)
+		sc.Deref(rec) 
 		return true, nil
 	} else {
 		return false, nil
@@ -156,6 +167,10 @@ func encodeValues(out []byte, vals []Value) []byte {
 			binary.BigEndian.PutUint64(buf[:], u)
 			out = append(out, buf[:]...)
 		case TYPE_BYTES:
+			if v.Str == nil {
+                out = append(out, 0)  // Just null terminator for nil strings
+                continue
+            }
 			out = append(out, escapeString(v.Str)...)
 			out = append(out, 0) // null-terminated
 		default:
@@ -166,22 +181,31 @@ func encodeValues(out []byte, vals []Value) []byte {
 }
 
 func decodeValues(in []byte, out []Value) {
-	index := 0
-	for index < len(in) {
-		var v Value
-		if index+8 < len(in) {
-			v.Type = TYPE_INT64
-			u := binary.BigEndian.Uint64(in[index : index+8])
-			v.I64 = int64(u - (1 << 63))
-			index += 8
-			out = append(out, v)
-		}
-		nullIdx := bytes.IndexByte(in[index:], 0)
-		if nullIdx != -1 {
-			v.Type = TYPE_BYTES
-			v.Str = unescapeString(in[index : index+nullIdx])
-			out = append(out, v)
-			index += nullIdx + 1
+	remaining := in
+	for i, v := range out {
+		switch v.Type {
+		case TYPE_INT64:
+			if len(remaining) < 8 {
+				return
+			}
+			u := binary.BigEndian.Uint64(remaining[:8])
+			val := int64(u - (1 << 63))
+			out[i] = Value{Type: TYPE_INT64, I64: val}
+			remaining = remaining[8:]
+		case TYPE_BYTES:
+			end := 0
+			for end < len(remaining) && remaining[end] != 0 {
+				end++
+			}
+			if end >= len(remaining) {
+				return
+			}
+			unEscStr := unEscapeString(remaining[:end])
+			fmt.Println("Enocoded str: ", remaining[:end])
+			fmt.Println("Unes: ", unEscStr)
+			out[i] =  Value{Type: TYPE_BYTES, Str: unEscStr}
+		default:
+			panic("invalid type")
 		}
 	}
 }
@@ -197,6 +221,12 @@ func escapeString(in []byte) []byte {
 	}
 	out := make([]byte, len(in)+zeros+ones)
 	pos := 0
+	if len(in) > 0 && in[0] >= 0xfe {
+		out[0] = 0xfe
+		out[1] = in[0]
+		pos += 2
+		in = in[1:]
+	}
 	for _, ch := range in {
 		if ch <= 1 { // if null character found
 			out[pos+0] = 0x01 // replace null character by escaping character
@@ -210,7 +240,7 @@ func escapeString(in []byte) []byte {
 	return out
 }
 
-func unescapeString(in []byte) []byte {
+func unEscapeString(in []byte) []byte {
 	if len(in) == 0 {
 		return in
 	}
@@ -223,21 +253,34 @@ func unescapeString(in []byte) []byte {
 		}
 	}
 
-	if escapeCount == 0 {
+	if escapeCount == 0 && (len(in) == 0 || in[0] != 0xfe) {
 		return in
 	}
-
-	out := make([]byte, len(in)-escapeCount)
+	outLen := len(in) - escapeCount
+	if in[0] == 0xfe {
+		outLen--
+	}
+	out := make([]byte, outLen)
 	pos := 0
+	i := 0
+	if in[0] == 0xfe {
+		if len(in) < 2 {
+			return in // Handle malformed input
+		}
+		out[pos] = in[1]
+		pos++
+		i += 2
+	}
 
-	for i := 0; i < len(in); i++ {
+	for i < len(in) {
 		if in[i] == 0x01 && i+1 < len(in) {
 			out[pos] = in[i+1] - 1
 			pos++
-			i++
+			i += 2
 		} else {
 			out[pos] = in[i]
 			pos++
+			i++
 		}
 	}
 
@@ -278,6 +321,7 @@ func contains(slice []string, item string) bool {
 	}
 	return false
 }
+
 func indexOf(slice []string, item string) int {
 	for i, v := range slice {
 		if v == item {

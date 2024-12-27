@@ -43,7 +43,6 @@ func (db *KV) Open() error {
 		return fmt.Errorf("OpenFile: %w", err)
 	}
 	db.fp = fp
-
 	// create the inital mmap
 	sz, chunk, err := mmapInit(db.fp)
 	if err != nil {
@@ -72,7 +71,6 @@ func (db *KV) Open() error {
 	if err != nil {
 		goto fail
 	}
-
 	// process completed
 	return nil
 
@@ -138,9 +136,9 @@ func writePages(db *KV) error {
 			copy(pageGetMapped(db, ptr).data, page)
 		}
 	}
-	for _, v := range db.page.updates {
-		fmt.Println(string(v))
-	}
+	// for _, v := range db.page.updates {
+	// 	fmt.Println(string(v))
+	// }
 	return nil
 }
 

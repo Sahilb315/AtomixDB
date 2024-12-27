@@ -15,10 +15,12 @@ const (
 // the iterator for range queries
 type Scanner struct {
 	// the range, from Key1 to Key2
-	Cmp1 int // CMP_??
-	Cmp2 int
-	Key1 Record
-	Key2 Record
+	db      *DB
+	indexNo int // -1: use primary key; >= 0: use an index
+	Cmp1    int
+	Cmp2    int
+	Key1    Record
+	Key2    Record
 	// internal
 	tdef   *TableDef
 	iter   *BIter // underlying BTree iterator
@@ -41,32 +43,52 @@ func dbScan(db *DB, tdef *TableDef, req *Scanner) error {
 	default:
 		return fmt.Errorf("bad range")
 	}
+	_, err := checkRecord(tdef, req.Key1, tdef.PKeys)
+	if err != nil {
+		return err
+	}
+	_, err = checkRecord(tdef, req.Key2, tdef.PKeys)
+	if err != nil {
+		return err
+	}
 
-	values1, err := checkRecord(tdef, req.Key1, tdef.PKeys)
+	indexNo, err := findIndex(tdef, req.Key1.Cols)
 	if err != nil {
 		return err
 	}
-	values2, err := checkRecord(tdef, req.Key2, tdef.PKeys)
-	if err != nil {
-		return err
+	index, prefix := tdef.Cols[:tdef.PKeys], tdef.Prefix
+	if indexNo >= 0 {
+		index, prefix = tdef.Indexes[indexNo], tdef.IndexPrefix[indexNo]
 	}
+
+	req.db = db
 	req.tdef = tdef
-
+	req.indexNo = indexNo
 	// seek to the start key
-	keyStart := encodeKey(nil, tdef.Prefix, values1[:tdef.PKeys])
-	req.keyEnd = encodeKey(nil, tdef.Prefix, values2[:tdef.PKeys])
+	keyStart := encodeKeyPartial(nil, prefix, req.Key1.Vals, tdef, index, req.Cmp1)
+	req.keyEnd = encodeKeyPartial(nil, prefix, req.Key2.Vals, tdef, index, req.Cmp2)
 	req.iter = db.kv.tree.Seek(keyStart, req.Cmp1)
 	return nil
 }
 
 // within the range or not
+// func (sc *Scanner) Valid() bool {
+// 	if !sc.iter.Valid() {
+// 		return false
+// 	}
+// 	key, _ := sc.iter.Deref()
+// 	return cmpOK(key, sc.Cmp2, sc.keyEnd)
+// }
+
 func (sc *Scanner) Valid() bool {
-	if sc.iter == nil || !sc.iter.Valid() {
+	if !sc.iter.Valid() {
+		fmt.Println("Iterator invalid")
 		return false
 	}
 	key, _ := sc.iter.Deref()
-
-	return cmpOK(key, sc.Cmp2, sc.keyEnd)
+	result := cmpOK(key, sc.Cmp2, sc.keyEnd)
+	fmt.Printf("Valid check - Key: %v, Cmp2: %d, KeyEnd: %v, Result: %v\n", (key), sc.Cmp2, (sc.keyEnd), result)
+	return result
 }
 
 // move the underlying B-tree iterator
@@ -87,11 +109,37 @@ func (sc *Scanner) Deref(rec *Record) {
 		return
 	}
 	tdef := sc.tdef
-	values, err := checkRecord(tdef, *rec, tdef.PKeys)
-	if err != nil {
-		return
+	rec.Cols = tdef.Cols
+	rec.Vals = rec.Vals[:0]
+	key, val := sc.iter.Deref()
+	fmt.Println("Deref key: ", string(key), sc.indexNo)
+	if sc.indexNo < 0 {
+		rec.Vals = rec.Vals[:0]
+		values := make([]Value, len(rec.Cols))
+
+		for i := range rec.Cols {
+			values[i].Type = tdef.Types[i]
+		}
+		fmt.Printf("Decoding values with rec col: %v", tdef.Cols[0])
+		decodeValues(val, values)
+		rec.Vals = append(rec.Vals, values...)
+	} else {
+		index := tdef.Indexes[sc.indexNo]
+		ival := make([]Value, len(index))
+		for i, col := range index {
+			ival[i].Type = tdef.Types[colIndex(tdef, col)]
+		}
+		decodeValues(key[4:], ival)
+		icol := Record{index, ival}
+
+		rec.Cols = rec.Cols[:tdef.PKeys]
+		for _, col := range rec.Cols {
+			rec.Vals = append(rec.Vals, *icol.Get(col))
+		}
+
+		ok, err := dbGet(sc.db, tdef, rec)
+		assert(ok && err == nil)
 	}
-	encodeKey(nil, tdef.Prefix, values[:tdef.PKeys])
 }
 
 // B-Tree Iterator
@@ -112,8 +160,11 @@ func (iter *BIter) Deref() (key []byte, val []byte) {
 
 // precondition of the Deref()
 func (iter *BIter) Valid() bool {
+	if len(iter.path) == 0 {
+		return false
+	}
 	lastNode := iter.path[len(iter.path)-1]
-	return len(iter.path) > 0 && lastNode.data != nil && iter.pos[len(iter.pos)-1] < lastNode.nKeys()
+	return lastNode.data != nil && iter.pos[len(iter.pos)-1] < lastNode.nKeys()
 }
 
 // moving backward and forward
@@ -130,12 +181,17 @@ func (tree *BTree) Seek(key []byte, cmp int) *BIter {
 	if cmp != CMP_LE && iter.Valid() {
 		cur, _ := iter.Deref()
 		if !cmpOK(cur, cmp, key) {
+			fmt.Println("Cmp is valid: ", cmp)
+			for i, r := range iter.path {
+				fmt.Printf("BIter at %d: %s\n", i,  string(r.data))
+			}
 			if cmp > 0 {
 				iter.Next()
 			} else {
 				iter.Prev()
 			}
 		}
+		fmt.Println("Cmp is not valid: ", cmp, string(cur), string(key))
 	}
 	return iter
 }

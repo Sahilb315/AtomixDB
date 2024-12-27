@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 const (
@@ -37,58 +38,99 @@ type DeleteReq struct {
 }
 
 func (db *DB) TableNew(tdef *TableDef) error {
-	if err := tableDefCheck(tdef); err != nil {
-		return err
-	}
-	// check the existing table
-	table := (&Record{}).AddStr("name", []byte(tdef.Name))
-	ok, err := dbGet(db, TDEF_TABLE, table)
-	if err != nil {
-		return err
-	}
-	if ok {
-		return fmt.Errorf("table exists: %s", tdef.Name)
-	}
-	// allocate a new prefix
-	tdef.Prefix = TABLE_PREFIX_MIN
-	meta := (&Record{}).AddStr("key", []byte("next_prefix"))
-	ok, err = dbGet(db, TDEF_META, meta)
-	if err != nil {
-		return err
-	}
-	if ok {
-		tdef.Prefix = binary.LittleEndian.Uint32(meta.Get("val").Str)
-	} else {
-		meta.AddStr("val", make([]byte, 4))
-	}
+    // Initial validation
+    if err := tableDefCheck(tdef); err != nil {
+        return fmt.Errorf("invalid table definition: %w", err)
+    }
 
-	for i := range tdef.Indexes {
-		prefix := tdef.Prefix + 1 + uint32(i)
-		tdef.IndexPrefix = append(tdef.IndexPrefix, prefix)
-	}
-	ntree := 1 + uint32(len(tdef.IndexPrefix))
-	binary.LittleEndian.PutUint32(meta.Get("val").Str, tdef.Prefix+ntree)
-	_, err = dbUpdate(db, TDEF_META, *meta, 0)
-	if err != nil {
-		return err
-	}
+    // Create table record with name
+    table := (&Record{}).AddStr("name", []byte(tdef.Name))
 
-	val, err := json.Marshal(tdef)
-	if err != nil {
-		return err
-	}
-	table.AddStr("def", val)
-	_, err = dbUpdate(db, TDEF_TABLE, *table, 0)
+    // Table existence check (keep this!)
+    if !strings.HasPrefix(tdef.Name, "@") {
+        ok, err := dbGet(db, TDEF_TABLE, table)
+        if err != nil {
+            return fmt.Errorf("error checking table existence: %w", err)
+        }
+        if ok {
+            return fmt.Errorf("table already exists: %s", tdef.Name)
+        }
+    }
 
-	// verifying the indexes
-	for i, c := range tdef.Indexes {
-		index, err := checkIndexKeys(tdef, c)
-		if err != nil {
-			return err
-		}
-		tdef.Indexes[i] = index
-	}
-	return err
+    // Get and update prefix atomically
+    meta := (&Record{}).AddStr("key", []byte("next_prefix"))
+    ok, err := dbGet(db, TDEF_META, meta)
+    if err != nil {
+        return fmt.Errorf("error reading meta: %w", err)
+    }
+
+    // Initialize prefix
+    if ok {
+        if len(meta.Get("val").Str) < 4 {
+            // Handle corrupted meta
+            return fmt.Errorf("corrupted meta value: invalid length")
+        }
+        tdef.Prefix = binary.LittleEndian.Uint32(meta.Get("val").Str)
+    } else {
+        // First time initialization
+        tdef.Prefix = TABLE_PREFIX_MIN
+        meta.AddStr("val", make([]byte, 4))
+    }
+
+    // Validate and assign index prefixes
+    if len(tdef.Indexes) > 0 {
+        tdef.IndexPrefix = make([]uint32, len(tdef.Indexes))
+        for i := range tdef.Indexes {
+            prefix := tdef.Prefix + 1 + uint32(i)
+            if prefix < tdef.Prefix { // Check for overflow
+                return fmt.Errorf("index prefix overflow")
+            }
+            tdef.IndexPrefix[i] = prefix
+        }
+    }
+
+    // Calculate next prefix
+    ntree := 1 + uint32(len(tdef.IndexPrefix))
+    nextPrefix := tdef.Prefix + ntree
+    if nextPrefix < tdef.Prefix { // Check for overflow
+        return fmt.Errorf("prefix overflow")
+    }
+
+    // Update meta
+    binary.LittleEndian.PutUint32(meta.Get("val").Str, nextPrefix)
+    added, err := dbUpdate(db, TDEF_META, *meta, MODE_UPSERT)
+    if err != nil {
+        return fmt.Errorf("failed to update meta: %w", err)
+    }
+    if !added {
+        return fmt.Errorf("failed to add meta entry")
+    }
+
+    // Marshal and store table definition
+    val, err := json.Marshal(tdef)
+    if err != nil {
+        return fmt.Errorf("failed to marshal table definition: %w", err)
+    }
+    table.AddStr("def", val)
+    
+    added, err = dbUpdate(db, TDEF_TABLE, *table, MODE_UPSERT)
+    if err != nil {
+        return fmt.Errorf("failed to update table definition: %w", err)
+    }
+    if !added {
+        return fmt.Errorf("failed to add table definition")
+    }
+
+    // Verify and update indexes
+    for i, c := range tdef.Indexes {
+        index, err := checkIndexKeys(tdef, c)
+        if err != nil {
+            return fmt.Errorf("invalid index %d: %w", i, err)
+        }
+        tdef.Indexes[i] = index
+    }
+
+    return nil
 }
 
 func (db *DB) Set(table string, rec Record, mode int) (bool, error) {
@@ -130,10 +172,12 @@ func dbDelete(db *DB, tdef *TableDef, rec Record) (bool, error) {
 	if !deleted || err != nil || len(tdef.Indexes) == 0 {
 		return deleted, err
 	}
-	decodeValues(req.Old, values[tdef.PKeys:])
-	indexOp(db, tdef, Record{tdef.Cols, values}, INDEX_DEL)
+	if deleted {
+		decodeValues(req.Old, values[tdef.PKeys:])
+		indexOp(db, tdef, Record{tdef.Cols, values}, INDEX_DEL)
+	}
 	return deleted, nil
-}	
+}
 
 func dbUpdate(db *DB, tdef *TableDef, rec Record, mode int) (bool, error) {
 	values, err := checkRecord(tdef, rec, len(tdef.Cols))
@@ -218,6 +262,8 @@ func (db *KV) SetWithMode(req *InsertReq) (bool, error) {
 		return false, errors.New("key does not exist")
 
 	case MODE_UPSERT:
+		fmt.Println("SetWithMode key: ", (req.Key))
+		fmt.Println("SetWithMode val: ", (req.Value))
 		old, exists := db.Get(req.Key)
 		if exists {
 			req.Old = old
