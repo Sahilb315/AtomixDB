@@ -135,8 +135,8 @@ func getTableDefDB(db *DB, name string) *TableDef {
 func dbGet(db *DB, tdef *TableDef, rec *Record) (bool, error) {
 	sc := Scanner{
 		Cmp1: CMP_GE,
-		Key1: *rec,
 		Cmp2: CMP_LE,
+		Key1: *rec,
 		Key2: *rec,
 	}
 	if err := dbScan(db, tdef, &sc); err != nil {
@@ -201,8 +201,6 @@ func decodeValues(in []byte, out []Value) {
 				return
 			}
 			unEscStr := unEscapeString(remaining[:end])
-			fmt.Println("Enocoded str: ", remaining[:end])
-			fmt.Println("Unes: ", unEscStr)
 			out[i] =  Value{Type: TYPE_BYTES, Str: unEscStr}
 		default:
 			panic("invalid type")

@@ -22,9 +22,10 @@ type Scanner struct {
 	Key1    Record
 	Key2    Record
 	// internal
-	tdef   *TableDef
-	iter   *BIter // underlying BTree iterator
-	keyEnd []byte // the encoded Key2
+	tdef     *TableDef
+	iter     *BIter // underlying BTree iterator
+	keyEnd   []byte // the encoded Key2
+	keyStart []byte // the encoded Key2
 }
 
 func (db *DB) Scan(table string, req *Scanner) error {
@@ -65,21 +66,13 @@ func dbScan(db *DB, tdef *TableDef, req *Scanner) error {
 	req.tdef = tdef
 	req.indexNo = indexNo
 	// seek to the start key
-	keyStart := encodeKeyPartial(nil, prefix, req.Key1.Vals, tdef, index, req.Cmp1)
+	req.keyStart = encodeKeyPartial(nil, prefix, req.Key1.Vals, tdef, index, req.Cmp1)
 	req.keyEnd = encodeKeyPartial(nil, prefix, req.Key2.Vals, tdef, index, req.Cmp2)
-	req.iter = db.kv.tree.Seek(keyStart, req.Cmp1)
+	req.iter = db.kv.tree.Seek(req.keyStart, req.Cmp1)
 	return nil
 }
 
 // within the range or not
-// func (sc *Scanner) Valid() bool {
-// 	if !sc.iter.Valid() {
-// 		return false
-// 	}
-// 	key, _ := sc.iter.Deref()
-// 	return cmpOK(key, sc.Cmp2, sc.keyEnd)
-// }
-
 func (sc *Scanner) Valid() bool {
 	if !sc.iter.Valid() {
 		fmt.Println("Iterator invalid")
@@ -87,8 +80,8 @@ func (sc *Scanner) Valid() bool {
 	}
 	key, _ := sc.iter.Deref()
 	result := cmpOK(key, sc.Cmp2, sc.keyEnd)
-	fmt.Printf("Valid check - Key: %v, Cmp2: %d, KeyEnd: %v, Result: %v\n", (key), sc.Cmp2, (sc.keyEnd), result)
-	return result
+	startRes := cmpOK(key, sc.Cmp1, sc.keyStart)
+	return result && startRes
 }
 
 // move the underlying B-tree iterator
@@ -112,15 +105,13 @@ func (sc *Scanner) Deref(rec *Record) {
 	rec.Cols = tdef.Cols
 	rec.Vals = rec.Vals[:0]
 	key, val := sc.iter.Deref()
-	fmt.Println("Deref key: ", string(key), sc.indexNo)
 	if sc.indexNo < 0 {
-		rec.Vals = rec.Vals[:0]
 		values := make([]Value, len(rec.Cols))
 
 		for i := range rec.Cols {
 			values[i].Type = tdef.Types[i]
 		}
-		fmt.Printf("Decoding values with rec col: %v", tdef.Cols[0])
+
 		decodeValues(val, values)
 		rec.Vals = append(rec.Vals, values...)
 	} else {
@@ -181,17 +172,12 @@ func (tree *BTree) Seek(key []byte, cmp int) *BIter {
 	if cmp != CMP_LE && iter.Valid() {
 		cur, _ := iter.Deref()
 		if !cmpOK(cur, cmp, key) {
-			fmt.Println("Cmp is valid: ", cmp)
-			for i, r := range iter.path {
-				fmt.Printf("BIter at %d: %s\n", i,  string(r.data))
-			}
 			if cmp > 0 {
 				iter.Next()
 			} else {
 				iter.Prev()
 			}
 		}
-		fmt.Println("Cmp is not valid: ", cmp, string(cur), string(key))
 	}
 	return iter
 }
