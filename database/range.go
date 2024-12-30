@@ -75,7 +75,6 @@ func dbScan(db *DB, tdef *TableDef, req *Scanner) error {
 // within the range or not
 func (sc *Scanner) Valid() bool {
 	if !sc.iter.Valid() {
-		fmt.Println("Iterator invalid")
 		return false
 	}
 	key, _ := sc.iter.Deref()
@@ -107,12 +106,11 @@ func (sc *Scanner) Deref(rec *Record) {
 	key, val := sc.iter.Deref()
 	if sc.indexNo < 0 {
 		values := make([]Value, len(rec.Cols))
-
 		for i := range rec.Cols {
 			values[i].Type = tdef.Types[i]
 		}
-
-		decodeValues(val, values)
+		decodeValues(key[4:], values[:tdef.PKeys])
+		decodeValues(val, values[tdef.PKeys:])
 		rec.Vals = append(rec.Vals, values...)
 	} else {
 		index := tdef.Indexes[sc.indexNo]

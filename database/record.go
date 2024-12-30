@@ -95,7 +95,6 @@ func (db *DB) Get(table string, rec *Record) (bool, error) {
 }
 
 func getTableDef(db *DB, name string) *TableDef {
-	fmt.Println("In TableDef for table name: ", name)
 	tdef, ok := db.tables[name]
 	if !ok {
 		if db.tables == nil {
@@ -143,7 +142,7 @@ func dbGet(db *DB, tdef *TableDef, rec *Record) (bool, error) {
 		return false, err
 	}
 	if sc.Valid() {
-		sc.Deref(rec) 
+		sc.Deref(rec)
 		return true, nil
 	} else {
 		return false, nil
@@ -168,9 +167,9 @@ func encodeValues(out []byte, vals []Value) []byte {
 			out = append(out, buf[:]...)
 		case TYPE_BYTES:
 			if v.Str == nil {
-                out = append(out, 0)  // Just null terminator for nil strings
-                continue
-            }
+				out = append(out, 0) // Just null terminator for nil strings
+				continue
+			}
 			out = append(out, escapeString(v.Str)...)
 			out = append(out, 0) // null-terminated
 		default:
@@ -201,7 +200,8 @@ func decodeValues(in []byte, out []Value) {
 				return
 			}
 			unEscStr := unEscapeString(remaining[:end])
-			out[i] =  Value{Type: TYPE_BYTES, Str: unEscStr}
+			out[i] = Value{Type: TYPE_BYTES, Str: unEscStr}
+			remaining = remaining[end+1:]
 		default:
 			panic("invalid type")
 		}

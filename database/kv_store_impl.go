@@ -23,14 +23,12 @@ func newDB() *DB {
 }
 
 func initializeInternalTables(db *DB) error {
-	fmt.Println("Creating TDEF_META...")
 	if err := db.TableNew(TDEF_META); err != nil {
 		if !strings.Contains(err.Error(), "table exists") {
 			return fmt.Errorf("failed to create TDEF_META: %v", err)
 		}
 		fmt.Println("TDEF_META already exists")
 	}
-	fmt.Println("Creating TDEF_TABLE...")
 	if err := db.TableNew(TDEF_TABLE); err != nil {
 		if !strings.Contains(err.Error(), "table exists") {
 			return fmt.Errorf("failed to create TDEF_TABLE: %v", err)
@@ -48,8 +46,10 @@ func StoreImpl() {
 	}
 	err := initializeInternalTables(db)
 	if err != nil {
-		fmt.Println("Error while init table: ", err)
-		os.Exit(0)
+		if !strings.Contains(err.Error(), "table already exists") {
+			fmt.Println("Error while init table: ", err)
+			os.Exit(0)
+		}
 	}
 	fmt.Println("Welcome to AtomixDB")
 	fmt.Println("Available Commands:")
@@ -58,7 +58,6 @@ func StoreImpl() {
 	fmt.Println("  DELETE       - Delete a record from a table")
 	fmt.Println("  GET          - Retrieve a record from a table")
 	fmt.Println("  UPDATE       - Update a record in a table")
-	fmt.Println("  LIST TABLES  - List all tables")
 	fmt.Println("  EXIT         - Exit the program")
 	fmt.Println()
 	for {
@@ -122,23 +121,23 @@ func StoreImpl() {
 				continue
 			}
 
-			for _, col := range tdef.Cols {
+			for i, col := range tdef.Cols {
 				fmt.Printf("Enter value for %s: ", col)
 				valStr, _ := scanner.ReadString('\n')
 				valStr = strings.TrimSpace(valStr)
 
 				var val Value
-				if col == tdef.Cols[0] { // Assuming first column is primary key (int64)
+				if tdef.Types[i] == TYPE_BYTES {
+					val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+				} else {
 					var key int64
 					fmt.Sscanf(valStr, "%d", &key)
 					val = Value{Type: TYPE_INT64, I64: key}
-				} else { // Assuming other columns are bytes
-					val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+
 				}
 				rec.Cols = append(rec.Cols, col)
 				rec.Vals = append(rec.Vals, val)
 			}
-
 			if added, err := db.Insert(tableName, rec); err != nil {
 				fmt.Println(err)
 			} else if added {
@@ -163,16 +162,19 @@ func StoreImpl() {
 				continue
 			}
 
-			for _, col := range tdef.Cols[:tdef.PKeys] { // Only ask for primary key(s) for deletion
+			for i, col := range tdef.Cols[:tdef.PKeys] {
 				fmt.Printf("Enter value for %s (primary key): ", col)
 				valStr, _ := scanner.ReadString('\n')
 				valStr = strings.TrimSpace(valStr)
 
 				var val Value
-				var key int64
-				fmt.Sscanf(valStr, "%d", &key)
-				val = Value{Type: TYPE_INT64, I64: key}
-
+				if tdef.Types[i] == TYPE_BYTES {
+					val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+				} else {
+					var key int64
+					fmt.Sscanf(valStr, "%d", &key)
+					val = Value{Type: TYPE_INT64, I64: key}
+				}
 				rec.Cols = append(rec.Cols, col)
 				rec.Vals = append(rec.Vals, val)
 			}
@@ -201,26 +203,27 @@ func StoreImpl() {
 				continue
 			}
 
-			for _, col := range tdef.Cols[:tdef.PKeys] { // Only ask for primary key(s) for retrieval
+			for i, col := range tdef.Cols[:tdef.PKeys] {
 				fmt.Printf("Enter value for %s (primary key): ", col)
 				valStr, _ := scanner.ReadString('\n')
 				valStr = strings.TrimSpace(valStr)
-
 				var val Value
-				var key int64
-				fmt.Sscanf(valStr, "%d", &key)
-				val = Value{Type: TYPE_INT64, I64: key}
-
+				if tdef.Types[i] == TYPE_BYTES {
+					val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+				} else {
+					var key int64
+					fmt.Sscanf(valStr, "%d", &key)
+					val = Value{Type: TYPE_INT64, I64: key}
+				}
 				rec.Cols = append(rec.Cols, col)
 				rec.Vals = append(rec.Vals, val)
 			}
 
-			// Assume Get function retrieves the record based on primary keys.
-			foundRec, err := db.Get(tableName, &rec) // You might need to implement this method.
+			foundRec, err := db.Get(tableName, &rec)
 			if err != nil {
 				fmt.Println(err)
 			} else if foundRec {
-				fmt.Printf("Retrieved Record: %v\n", rec) // Print retrieved record
+				printRecord(rec)
 			} else {
 				fmt.Println("Record not found.")
 			}
@@ -241,20 +244,19 @@ func StoreImpl() {
 				continue
 			}
 
-			for _, col := range tdef.Cols { // Ask for all columns including primary keys and values to update
+			for i, col := range tdef.Cols {
 				fmt.Printf("Enter value for %s (leave blank to skip): ", col)
 				valStr, _ := scanner.ReadString('\n')
 				valStr = strings.TrimSpace(valStr)
 
 				var val Value
-				if col == tdef.Cols[0] { // Assuming first column is primary key (int64)
+				if tdef.Types[i] == TYPE_BYTES {
+					val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+				} else {
 					var key int64
 					fmt.Sscanf(valStr, "%d", &key)
 					val = Value{Type: TYPE_INT64, I64: key}
-				} else { // Assuming other columns are bytes
-					val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
 				}
-
 				rec.Cols = append(rec.Cols, col)
 				rec.Vals = append(rec.Vals, val)
 			}
@@ -262,17 +264,10 @@ func StoreImpl() {
 			if updated, err := db.Update(tableName, rec); err != nil {
 				fmt.Println(err)
 			} else if updated {
-				fmt.Println("Record updated successfully.")
+				printRecord(rec)
 			} else {
 				fmt.Println("Failed to update record.")
 			}
-
-		case "LIST TABLES":
-			fmt.Println("Existing Tables:")
-			for name := range db.tables {
-				fmt.Println(" -", name)
-			}
-
 		case "EXIT":
 			db.kv.Close()
 			fmt.Println("Exiting...")
@@ -282,4 +277,30 @@ func StoreImpl() {
 			fmt.Println("Unknown command:", command)
 		}
 	}
+}
+
+func formatValue(v Value) string {
+	switch v.Type {
+	case 1:
+		return fmt.Sprintf("%d", v.I64)
+	case 2:
+		return string(v.Str)
+	default:
+		return "Unknown Type"
+	}
+}
+
+func printRecord(record Record) {
+	headers := strings.Join(record.Cols, "\t")
+	fmt.Println(headers)
+
+	for i, val := range record.Vals {
+		formattedValue := formatValue(val)
+		if i == len(record.Vals)-1 {
+			fmt.Print(formattedValue)
+		} else {
+			fmt.Print(formattedValue + "\t")
+		}
+	}
+	fmt.Println()
 }

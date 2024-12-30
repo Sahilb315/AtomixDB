@@ -40,8 +40,6 @@ func (db *DB) TableNew(tdef *TableDef) error {
 	if err := tableDefCheck(tdef); err != nil {
 		return fmt.Errorf("invalid table definition: %w", err)
 	}
-	fmt.Printf("\n=== Creating New Table ===\n")
-
 	table := (&Record{}).AddStr("name", []byte(tdef.Name))
 
 	// Table existence check
@@ -81,10 +79,7 @@ func (db *DB) TableNew(tdef *TableDef) error {
 	}
 
 	ntree := 1 + uint32(len(tdef.IndexPrefix))
-	fmt.Println("ntree: ", ntree)
-	fmt.Println("tdef.Prefix: ", tdef.Prefix)
 	nextPrefix := tdef.Prefix + ntree
-	fmt.Println("nextPrefix: ", nextPrefix)
 	if nextPrefix < tdef.Prefix {
 		return fmt.Errorf("prefix overflow")
 	}
@@ -259,9 +254,6 @@ func (db *KV) SetWithMode(req *InsertReq) (bool, error) {
 		if exists {
 			req.Old = old
 		}
-		fmt.Println("SetWithMode key: ", string(req.Key))
-		fmt.Println("SetWithMode val: ", (req.Value))
-		fmt.Println("Exists: ", exists)
 		err := db.Set(req.Key, req.Value)
 		req.Updated = true
 		return true, err
@@ -284,9 +276,6 @@ func tableDefCheck(tdef *TableDef) error {
 	if tdef.Name == "" {
 		return errors.New("table name cannot be empty")
 	}
-	// if !isValidTableName(tdef.Name) {
-	// 	return errors.New("invalid table name")
-	// }
 	if len(tdef.Cols) == 0 {
 		return errors.New("table must have at least one column")
 	}
