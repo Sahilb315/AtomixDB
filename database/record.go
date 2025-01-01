@@ -86,14 +86,6 @@ func (rec *Record) Get(key string) *Value {
 	return nil
 }
 
-func (db *DB) Get(table string, rec *Record) (bool, error) {
-	tdef := getTableDef(db, table)
-	if tdef == nil {
-		return false, fmt.Errorf("table not found: %s", table)
-	}
-	return dbGet(db, tdef, rec)
-}
-
 func getTableDef(db *DB, name string) *TableDef {
 	tdef, ok := db.tables[name]
 	if !ok {

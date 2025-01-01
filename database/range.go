@@ -44,15 +44,6 @@ func dbScan(db *DB, tdef *TableDef, req *Scanner) error {
 	default:
 		return fmt.Errorf("bad range")
 	}
-	_, err := checkRecord(tdef, req.Key1, tdef.PKeys)
-	if err != nil {
-		return err
-	}
-	_, err = checkRecord(tdef, req.Key2, tdef.PKeys)
-	if err != nil {
-		return err
-	}
-
 	indexNo, err := findIndex(tdef, req.Key1.Cols)
 	if err != nil {
 		return err
@@ -63,6 +54,7 @@ func dbScan(db *DB, tdef *TableDef, req *Scanner) error {
 	}
 
 	req.db = db
+
 	req.tdef = tdef
 	req.indexNo = indexNo
 	// seek to the start key
@@ -127,7 +119,9 @@ func (sc *Scanner) Deref(rec *Record) {
 		}
 
 		ok, err := dbGet(sc.db, tdef, rec)
-		assert(ok && err == nil)
+		if !ok && err != nil {
+			fmt.Println("Error getting record from DB")
+		}
 	}
 }
 

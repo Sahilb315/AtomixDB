@@ -62,7 +62,9 @@ func (db *DB) TableNew(tdef *TableDef) error {
 			return fmt.Errorf("corrupted meta value: invalid length")
 		}
 		tdef.Prefix = binary.LittleEndian.Uint32(meta.Get("val").Str)
-		assert(tdef.Prefix > TABLE_PREFIX_MIN)
+		if TABLE_PREFIX_MIN > tdef.Prefix {
+			return errors.New("Table prefix less than the min TABLE_PREFIX")
+		}
 	} else {
 		meta.AddStr("val", make([]byte, 4))
 	}
@@ -83,7 +85,6 @@ func (db *DB) TableNew(tdef *TableDef) error {
 	if nextPrefix < tdef.Prefix {
 		return fmt.Errorf("prefix overflow")
 	}
-
 	// Update meta
 	binary.LittleEndian.PutUint32(meta.Get("val").Str, nextPrefix)
 	added, err := dbUpdate(db, TDEF_META, *meta, MODE_UPSERT)
@@ -127,6 +128,14 @@ func (db *DB) Set(table string, rec Record, mode int) (bool, error) {
 		return false, fmt.Errorf("table not found: %s", table)
 	}
 	return dbUpdate(db, tdef, rec, mode)
+}
+
+func (db *DB) Get(table string, rec *Record) (bool, error) {
+	tdef := getTableDef(db, table)
+	if tdef == nil {
+		return false, fmt.Errorf("table not found: %s", table)
+	}
+	return dbGet(db, tdef, rec)
 }
 
 func (db *DB) Insert(table string, rec Record) (bool, error) {
@@ -177,15 +186,16 @@ func dbUpdate(db *DB, tdef *TableDef, rec Record, mode int) (bool, error) {
 	req := InsertReq{Key: key, Value: vals, Mode: mode}
 	added, err := db.kv.SetWithMode(&req)
 	// if err or no changes made return
-	if err != nil || !req.Updated || len(tdef.Indexes) == 0 {
+	if err != nil || len(tdef.Indexes) == 0 {
 		return added, err
 	}
+
 	if req.Updated && !req.Added {
 		//  delete the old index entries
 		decodeValues(req.Old, values[tdef.PKeys:]) // get the old row
 		indexOp(db, tdef, Record{tdef.Cols, values}, INDEX_DEL)
 	}
-	if req.Updated {
+	if req.Updated || req.Added {
 		indexOp(db, tdef, rec, INDEX_ADD)
 	}
 	return added, nil

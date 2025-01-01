@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -114,7 +115,9 @@ func checkIndexKeys(tdef *TableDef, index []string) ([]string, error) {
 			index = append(index, c)
 		}
 	}
-	assert(len(index) < len(tdef.Cols))
+	if len(index) >= len(tdef.Cols) {
+		return nil, errors.New("Index len should be shorter than columns")
+	}
 	return index, nil
 }
 

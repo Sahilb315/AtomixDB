@@ -38,7 +38,7 @@ type KV struct {
 // |  8B | 	   8B 	  | 	 8B	  |		8B	  |
 
 func (db *KV) Open() error {
-	fp, err := os.OpenFile(db.Path, os.O_RDWR|os.O_CREATE, 0644)
+	fp, err := os.OpenFile(db.Path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return fmt.Errorf("OpenFile: %w", err)
 	}
@@ -82,7 +82,9 @@ fail:
 func (db *KV) Close() {
 	for _, chunk := range db.mmap.chunks {
 		err := syscall.Munmap(chunk)
-		assert(err == nil)
+		if err != nil {
+			fmt.Println("Error while closing DB")
+		}
 	}
 	_ = db.fp.Close()
 }

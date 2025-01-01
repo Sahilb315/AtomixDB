@@ -31,9 +31,9 @@ type BTree struct {
 }
 
 func (tree *BTree) Insert(key, val []byte) {
-	assert(len(key) != 0)
-	assert(len(key) <= BTREE_MAX_KEY_SIZE)
-	assert(len(val) <= BTREE_MAX_VAL_SIZE)
+	if len(key) == 0 || len(key) > BTREE_MAX_KEY_SIZE || len(val) > BTREE_MAX_VAL_SIZE {
+		return
+	}
 
 	if tree.root == 0 {
 		root := BNode{data: make([]byte, BTREE_PAGE_SIZE)}

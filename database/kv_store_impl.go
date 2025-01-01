@@ -91,12 +91,24 @@ func StoreImpl() {
 				types[i] = typeValue
 			}
 
+			fmt.Print("Enter indexes (format: col1+col2,col3, ... or leave empty): ")
+			indexInput, _ := scanner.ReadString('\n')
+			indexInput = strings.TrimSpace(indexInput)
+
+			indexes := [][]string{}
+			if indexInput != "" {
+				indexList := strings.Split(indexInput, ",")
+				for _, indexCols := range indexList {
+					indexes = append(indexes, strings.Split(indexCols, "+"))
+				}
+			}
+
 			tdef := &TableDef{
 				Name:        name,
 				Cols:        cols,
 				Types:       types,
 				PKeys:       1,
-				Indexes:     make([][]string, 0),
+				Indexes:     indexes,
 				IndexPrefix: make([]uint32, 0),
 			}
 			if err := db.TableNew(tdef); err != nil {
@@ -202,23 +214,44 @@ func StoreImpl() {
 				fmt.Printf("Table '%s' not found.\n", tableName)
 				continue
 			}
+			fmt.Printf("Enter primary key or index col: ")
+			colStr, _ := scanner.ReadString('\n')
+			colStr = strings.TrimSpace(colStr)
 
-			for i, col := range tdef.Cols[:tdef.PKeys] {
-				fmt.Printf("Enter value for %s (primary key): ", col)
+			splitCol := strings.Split(colStr, ",")
+			if len(splitCol) > 1 {
+				for _, col := range splitCol {
+					fmt.Printf("Enter value for col %s: ", col)
+					valStr, _ := scanner.ReadString('\n')
+					valStr = strings.TrimSpace(valStr)
+					var val Value
+					idx := colIndex(tdef, colStr)
+					if tdef.Types[idx] == TYPE_BYTES {
+						val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+					} else {
+						var key int64
+						fmt.Sscanf(valStr, "%d", &key)
+						val = Value{Type: TYPE_INT64, I64: key}
+					}
+					rec.Cols = append(rec.Cols, col)
+					rec.Vals = append(rec.Vals, val)
+				}
+			} else {
+				fmt.Printf("Enter value for col %s: ", colStr)
 				valStr, _ := scanner.ReadString('\n')
 				valStr = strings.TrimSpace(valStr)
 				var val Value
-				if tdef.Types[i] == TYPE_BYTES {
+				idx := colIndex(tdef, colStr)
+				if tdef.Types[idx] == TYPE_BYTES {
 					val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
 				} else {
 					var key int64
 					fmt.Sscanf(valStr, "%d", &key)
 					val = Value{Type: TYPE_INT64, I64: key}
 				}
-				rec.Cols = append(rec.Cols, col)
+				rec.Cols = append(rec.Cols, colStr)
 				rec.Vals = append(rec.Vals, val)
 			}
-
 			foundRec, err := db.Get(tableName, &rec)
 			if err != nil {
 				fmt.Println(err)
@@ -245,7 +278,11 @@ func StoreImpl() {
 			}
 
 			for i, col := range tdef.Cols {
-				fmt.Printf("Enter value for %s (leave blank to skip): ", col)
+				if i == 0 {
+					fmt.Printf("Enter primary key for %s: ", col)
+				} else {
+					fmt.Printf("Enter value for %s: ", col)
+				}
 				valStr, _ := scanner.ReadString('\n')
 				valStr = strings.TrimSpace(valStr)
 
