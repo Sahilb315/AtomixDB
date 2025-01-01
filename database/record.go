@@ -165,7 +165,7 @@ func encodeValues(out []byte, vals []Value) []byte {
 			out = append(out, escapeString(v.Str)...)
 			out = append(out, 0) // null-terminated
 		default:
-			panic("invalid type")
+			panic("invalid type while encodeValues")
 		}
 	}
 	return out
@@ -195,7 +195,7 @@ func decodeValues(in []byte, out []Value) {
 			out[i] = Value{Type: TYPE_BYTES, Str: unEscStr}
 			remaining = remaining[end+1:]
 		default:
-			panic("invalid type")
+			panic("invalid type while decodeValues")
 		}
 	}
 }

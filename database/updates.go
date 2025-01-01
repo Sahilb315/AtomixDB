@@ -201,20 +201,21 @@ func dbUpdate(db *DB, tdef *TableDef, rec Record, mode int) (bool, error) {
 	return added, nil
 }
 
-func (tree *BTree) DeleteEx(req *DeleteReq) {
+func (tree *BTree) DeleteEx(req *DeleteReq) bool {
 	if tree == nil || req == nil {
-		return
+		return false
 	}
 
 	// Check if the key already exists
 	key, exists := tree.Get(req.Key)
 	if !exists {
-		return
+		return false
 	}
 	isDeleted := tree.Delete(key)
 	if isDeleted {
 		req.Old = key
 	}
+	return isDeleted
 }
 
 func (tree *BTree) InsertEx(req *InsertReq) {
@@ -289,7 +290,9 @@ func tableDefCheck(tdef *TableDef) error {
 	if len(tdef.Cols) == 0 {
 		return errors.New("table must have at least one column")
 	}
-	// Track column names to check for duplicates
+	if len(tdef.Cols) != len(tdef.Types) {
+		return errors.New("length of columns & types do not match")
+	}
 	columnNames := make(map[string]bool)
 
 	for i, col := range tdef.Cols {

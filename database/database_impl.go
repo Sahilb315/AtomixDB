@@ -51,9 +51,13 @@ func StoreImpl() {
 			os.Exit(0)
 		}
 	}
+	var currentTX *DBTX
 	fmt.Println("Welcome to AtomixDB")
 	fmt.Println("Available Commands:")
 	fmt.Println("  CREATE       - Create a new table")
+	fmt.Println("  BEGIN        - Begin new transaction")
+	fmt.Println("  COMMIT       - Commit transaction")
+	fmt.Println("  ABORT        - Rollback transaction")
 	fmt.Println("  INSERT       - Add a record to a table")
 	fmt.Println("  DELETE       - Delete a record from a table")
 	fmt.Println("  GET          - Retrieve a record from a table")
@@ -117,6 +121,36 @@ func StoreImpl() {
 				fmt.Printf("Table '%s' created successfully.\n", name)
 			}
 
+		case "BEGIN":
+			if currentTX != nil {
+				fmt.Println("Transaction already in progress. Commit or abort the current transaction before starting a new one.")
+				continue
+			}
+			currentTX = &DBTX{}
+			db.Begin(currentTX)
+			fmt.Println("Transaction started.")
+
+		case "COMMIT":
+			if currentTX == nil {
+				fmt.Println("No active transaction to commit.")
+				continue
+			}
+			if err := db.Commit(currentTX); err != nil {
+				fmt.Printf("Failed to commit transaction: %v\n", err)
+			} else {
+				fmt.Println("Transaction committed successfully.")
+			}
+			currentTX = nil
+
+		case "ABORT":
+			if currentTX == nil {
+				fmt.Println("No active transaction to abort.")
+				continue
+			}
+			db.Abort(currentTX)
+			fmt.Println("Transaction aborted.")
+			currentTX = nil
+
 		case "INSERT":
 			fmt.Print("Enter table name: ")
 			tableName, _ := scanner.ReadString('\n')
@@ -150,13 +184,30 @@ func StoreImpl() {
 				rec.Cols = append(rec.Cols, col)
 				rec.Vals = append(rec.Vals, val)
 			}
-			if added, err := db.Insert(tableName, rec); err != nil {
-				fmt.Println(err)
-			} else if added {
-				fmt.Println("Record inserted successfully.")
+			if currentTX != nil {
+				if added, err := currentTX.Set(tableName, rec, MODE_INSERT_ONLY); err != nil {
+					fmt.Println(err)
+				} else if added {
+					fmt.Println("Record inserted successfully.")
+				} else {
+					fmt.Println("Failed to insert record.")
+				}
 			} else {
-				fmt.Println("Failed to insert record.")
+				if added, err := db.Insert(tableName, rec); err != nil {
+					fmt.Println(err)
+				} else if added {
+					fmt.Println("Record inserted successfully.")
+				} else {
+					fmt.Println("Failed to insert record.")
+				}
 			}
+			// if added, err := db.Insert(tableName, rec); err != nil {
+			// 	fmt.Println(err)
+			// } else if added {
+			// 	fmt.Println("Record inserted successfully.")
+			// } else {
+			// 	fmt.Println("Failed to insert record.")
+			// }
 
 		case "DELETE":
 			fmt.Print("Enter table name: ")
@@ -191,14 +242,23 @@ func StoreImpl() {
 				rec.Vals = append(rec.Vals, val)
 			}
 
-			if deleted, err := db.Delete(tableName, rec); err != nil {
-				fmt.Println(err)
-			} else if deleted {
-				fmt.Println("Record deleted successfully.")
+			if currentTX != nil {
+				if deleted, err := currentTX.Delete(tableName, rec); err != nil {
+					fmt.Println(err)
+				} else if deleted {
+					fmt.Println("Record deleted successfully.")
+				} else {
+					fmt.Println("Failed to delete record.")
+				}
 			} else {
-				fmt.Println("Failed to delete record.")
+				if deleted, err := db.Delete(tableName, rec); err != nil {
+					fmt.Println(err)
+				} else if deleted {
+					fmt.Println("Record deleted successfully.")
+				} else {
+					fmt.Println("Failed to delete record.")
+				}
 			}
-
 		case "GET":
 			fmt.Print("Enter table name: ")
 			tableName, _ := scanner.ReadString('\n')
@@ -252,13 +312,24 @@ func StoreImpl() {
 				rec.Cols = append(rec.Cols, colStr)
 				rec.Vals = append(rec.Vals, val)
 			}
-			foundRec, err := db.Get(tableName, &rec)
-			if err != nil {
-				fmt.Println(err)
-			} else if foundRec {
-				printRecord(rec)
+			if currentTX != nil {
+				foundRec, err := currentTX.Get(tableName, &rec)
+				if err != nil {
+					fmt.Println(err)
+				} else if foundRec {
+					printRecord(rec)
+				} else {
+					fmt.Println("Record not found.")
+				}
 			} else {
-				fmt.Println("Record not found.")
+				foundRec, err := db.Get(tableName, &rec)
+				if err != nil {
+					fmt.Println(err)
+				} else if foundRec {
+					printRecord(rec)
+				} else {
+					fmt.Println("Record not found.")
+				}
 			}
 
 		case "UPDATE":
@@ -297,13 +368,22 @@ func StoreImpl() {
 				rec.Cols = append(rec.Cols, col)
 				rec.Vals = append(rec.Vals, val)
 			}
-
-			if updated, err := db.Update(tableName, rec); err != nil {
-				fmt.Println(err)
-			} else if updated {
-				printRecord(rec)
+			if currentTX != nil {
+				if updated, err := currentTX.Set(tableName, rec, MODE_UPDATE_ONLY); err != nil {
+					fmt.Println(err)
+				} else if updated {
+					printRecord(rec)
+				} else {
+					fmt.Println("Failed to update record.")
+				}
 			} else {
-				fmt.Println("Failed to update record.")
+				if updated, err := db.Update(tableName, rec); err != nil {
+					fmt.Println(err)
+				} else if updated {
+					printRecord(rec)
+				} else {
+					fmt.Println("Failed to update record.")
+				}
 			}
 		case "EXIT":
 			db.kv.Close()
