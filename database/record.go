@@ -13,6 +13,12 @@ const (
 	TYPE_BYTES = 2
 )
 
+// table row
+type Record struct {
+	Cols []string
+	Vals []Value
+}
+
 // table cell
 type Value struct {
 	Type uint32
@@ -20,16 +26,10 @@ type Value struct {
 	Str  []byte
 }
 
-// table row
-type Record struct {
-	Cols []string
-	Vals []Value
-}
-
 type DB struct {
 	Path   string
-	kv     KV
-	tables map[string]*TableDef // cached table definition
+	KV     KV
+	Tables map[string]*TableDef // cached table definition
 }
 
 type TableDef struct {
@@ -86,24 +86,24 @@ func (rec *Record) Get(key string) *Value {
 	return nil
 }
 
-func getTableDef(db *DB, name string) *TableDef {
-	tdef, ok := db.tables[name]
+func GetTableDef(db *DB, name string, tree *BTree) *TableDef {
+	tdef, ok := db.Tables[name]
 	if !ok {
-		if db.tables == nil {
-			db.tables = map[string]*TableDef{}
+		if db.Tables == nil {
+			db.Tables = map[string]*TableDef{}
 		}
-		tdef = getTableDefDB(db, name)
+		tdef = getTableDefDB(db, name, tree)
 		if tdef != nil {
-			db.tables[name] = tdef
+			db.Tables[name] = tdef
 		}
 	}
 	return tdef
 }
 
-func getTableDefDB(db *DB, name string) *TableDef {
+func getTableDefDB(db *DB, name string, tree *BTree) *TableDef {
 	rec := (&Record{}).AddStr("name", []byte(name))
 	// get the tdef from the `BTree` using the PKey - `name`
-	ok, err := dbGet(db, TDEF_TABLE, rec)
+	ok, err := dbGet(db, TDEF_TABLE, rec, tree)
 	if err != nil {
 		return nil
 	}
@@ -123,18 +123,18 @@ func getTableDefDB(db *DB, name string) *TableDef {
 }
 
 // get row by primary key
-func dbGet(db *DB, tdef *TableDef, rec *Record) (bool, error) {
+func dbGet(db *DB, tdef *TableDef, rec *Record, tree *BTree) (bool, error) {
 	sc := Scanner{
 		Cmp1: CMP_GE,
 		Cmp2: CMP_LE,
 		Key1: *rec,
 		Key2: *rec,
 	}
-	if err := dbScan(db, tdef, &sc); err != nil {
+	if err := dbScan(db, tdef, &sc, tree); err != nil {
 		return false, err
 	}
 	if sc.Valid() {
-		sc.Deref(rec)
+		sc.Deref(rec, tree)
 		return true, nil
 	} else {
 		return false, nil

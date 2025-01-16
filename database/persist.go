@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"syscall"
 )
 
@@ -14,9 +15,13 @@ const DB_SIG = "AtmoixDB"
 type KV struct {
 	Path string
 	// internals
-	fp   *os.File
-	tree BTree
-	free *FreeList
+	fp *os.File
+
+	tree struct {
+		root uint64
+	}
+	free FreeListData
+
 	mmap struct {
 		file   int      // file size, can be larger than DB size
 		total  int      // mmap size, can be larger than file size
@@ -24,18 +29,78 @@ type KV struct {
 	}
 	page struct {
 		flushed uint64 // DB size in number of pages
-		nfree   int    // number of pages taken from the free list
-		nappend int    // number of pages to be appended
-		// newly allocated or deallocated pages keyed by the pointer.
-		// nil value denotes a deallocated page.
-		updates map[uint64][]byte // Temporary pages are kept in a map keyed by their assigned page numbers. And removed page numbers are also there
 	}
+
+	mu     sync.Mutex
+	writer sync.Mutex
+
+	version uint64
+	readers ReaderList // heap, for tranking the minimum reader version
+}
+
+// implements heap.Interface
+type ReaderList []*KVReader
+
+func (rl ReaderList) Len() int {
+	return len(rl)
+}
+
+func (rl ReaderList) Less(i int, j int) bool {
+	if rl[i] == nil || rl[j] == nil {
+		return false // Handle nil pointers as needed
+	}
+	return rl[i].index < rl[j].index
+}
+
+func (rl ReaderList) Swap(i, j int) {
+	rl[i], rl[j] = rl[j], rl[i]
+}
+
+func (rl *ReaderList) Push(item interface{}) {
+	*rl = append(*rl, item.(*KVReader))
+}
+
+func (rl *ReaderList) Pop() interface{} {
+	old := *rl
+	n := len(old)
+	x := old[n-1]
+	*rl = old[0 : n-1]
+	return x
 }
 
 // the master page format.
 // it contains the pointer to the root and other important bits.
-// | sig | btree_root | page_used | free_list |
-// |  8B | 	   8B 	  | 	 8B	  |		8B	  |
+// | sig | btree_root | page_used | free_list | version |
+// |  8B | 	   8B 	  | 	 8B	  |		8B	  |   8B    |
+
+func (kv *KV) Begin(tx *KVTX) {
+	tx.kv = kv
+	tx.page.updates = map[uint64][]byte{}
+	tx.mmap.chunks = kv.mmap.chunks
+
+	kv.writer.Lock()
+	tx.version = kv.version
+	// btree
+	tx.Tree.root = kv.tree.root
+	tx.Tree.get = tx.pageGet
+	tx.Tree.new = tx.pageNew
+	tx.Tree.del = tx.pageDel
+
+	// freelist
+	tx.free.FreeListData = kv.free
+	tx.free.version = kv.version
+	tx.free.get = tx.pageGet
+	tx.free.new = tx.pageAppend
+	tx.free.use = tx.pageUse
+
+	tx.free.minReader = kv.version
+	kv.mu.Lock()
+
+	if len(kv.readers) > 0 {
+		tx.free.minReader = kv.readers[0].version
+	}
+	kv.mu.Unlock()
+}
 
 func (db *KV) Open() error {
 	fp, err := os.OpenFile(db.Path, os.O_RDWR|os.O_CREATE, 0o644)
@@ -53,19 +118,9 @@ func (db *KV) Open() error {
 	db.mmap.chunks = [][]byte{chunk}
 
 	// init freelist
-	db.free = &FreeList{
+	db.free = FreeListData{
 		head: 0,
-		use:  db.pageUse,
-		new:  db.pageAppend,
-		get:  db.pageGet,
 	}
-	db.page.updates = make(map[uint64][]byte)
-
-	// btree callbacks
-	db.tree.get = db.pageGet
-	db.tree.new = db.pageNew
-	db.tree.del = db.pageDel
-
 	// read the master page
 	err = masterLoad(db)
 	if err != nil {
@@ -89,18 +144,18 @@ func (db *KV) Close() {
 	_ = db.fp.Close()
 }
 
-func (db *KV) Get(key []byte) ([]byte, bool) {
-	return db.tree.Get(key)
+func (db *KVTX) Get(key []byte) ([]byte, bool) {
+	return db.Tree.Get(key)
 }
 
-func (db *KV) Set(key, val []byte) error {
-	db.tree.Insert(key, val)
+func (db *KVTX) Set(key, val []byte) error {
+	db.Tree.Insert(key, val)
 	return flushPages(db)
 }
 
-func (db *KV) Delete(req *DeleteReq) (bool, error) {
+func (db *KVTX) Delete(req *DeleteReq) (bool, error) {
 	val, _ := db.Get(req.Key)
-	deleted := db.tree.Delete(req.Key)
+	deleted := db.Tree.Delete(req.Key)
 	if deleted {
 		req.Old = val
 	}
@@ -108,14 +163,14 @@ func (db *KV) Delete(req *DeleteReq) (bool, error) {
 }
 
 // persist the newly allocated pages after updates
-func flushPages(db *KV) error {
+func flushPages(db *KVTX) error {
 	if err := writePages(db); err != nil {
 		return err
 	}
 	return syncPages(db)
 }
 
-func writePages(db *KV) error {
+func writePages(db *KVTX) error {
 	freed := []uint64{}
 
 	for ptr, page := range db.page.updates {
@@ -123,38 +178,36 @@ func writePages(db *KV) error {
 			freed = append(freed, ptr)
 		}
 	}
-	db.free.Update(db.page.nfree, freed)
-	npages := int(db.page.flushed) + db.page.nappend
+	db.free.Add(freed)
+	npages := int(db.page.nappend) + int(db.kv.page.flushed)
+
 	// extends mmap & file if needed
-	if err := extendFile(db, npages); err != nil {
+	if err := extendFile(db.kv, npages); err != nil {
 		return err
 	}
-	if err := extendMmap(db, npages); err != nil {
+	if err := extendMmap(db.kv, npages); err != nil {
 		return err
 	}
 
 	for ptr, page := range db.page.updates {
 		if page != nil {
-			copy(pageGetMapped(db, ptr).data, page)
+			copy(db.pageGetMapped(ptr).data, page)
 		}
 	}
-	// for _, v := range db.page.updates {
-	// 	fmt.Println(string(v))
-	// }
 	return nil
 }
 
-func syncPages(db *KV) error {
-	if err := db.fp.Sync(); err != nil {
+func syncPages(db *KVTX) error {
+	if err := db.kv.fp.Sync(); err != nil {
 		return fmt.Errorf("fsync: %w", err)
 	}
-	db.page.flushed += uint64(db.page.nappend)
+	db.kv.page.flushed += uint64(db.page.nappend)
 	db.page.updates = map[uint64][]byte{}
 
-	if err := masterStore(db); err != nil {
+	if err := masterStore(db.kv); err != nil {
 		return err
 	}
-	if err := db.fp.Sync(); err != nil {
+	if err := db.kv.fp.Sync(); err != nil {
 		return fmt.Errorf("fsync: %w", err)
 	}
 	return nil
@@ -175,8 +228,7 @@ func masterLoad(db *KV) error {
 	if !bytes.Equal([]byte(DB_SIG), data[:8]) {
 		return errors.New("bad signature")
 	}
-
-	isBad := !(pagesUsed >= 1 && pagesUsed <= uint64(db.mmap.file/BTREE_PAGE_SIZE))
+	isBad := !(1 <= pagesUsed && pagesUsed <= uint64(db.mmap.file/BTREE_PAGE_SIZE))
 	isBad = isBad || !(0 <= root && root < pagesUsed)
 
 	if isBad {
@@ -217,6 +269,7 @@ func mmapInit(fp *os.File) (int, []byte, error) {
 		// mmapSize can be larger than the file
 		mmapSize *= 2
 	}
+
 	// maps the file data into the process's virtual address space
 	chunk, err := syscall.Mmap(int(fp.Fd()), 0, mmapSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	if err != nil {
@@ -268,35 +321,29 @@ func extendFile(db *KV, npages int) error {
 }
 
 // callbacks for BTree & Freelist, dereference a pointer
-func (db *KV) pageGet(ptr uint64) BNode {
+func (db *KVTX) pageGet(ptr uint64) BNode {
 	if page, ok := db.page.updates[ptr]; ok {
 		return BNode{page}
 	}
-	return pageGetMapped(db, ptr)
+	return db.pageGetMapped(ptr)
 }
 
 // callback for BTree, allocate a new page
-func (db *KV) pageNew(node BNode) uint64 {
+func (db *KVTX) pageNew(node BNode) uint64 {
 	assert(len(node.data) <= BTREE_PAGE_SIZE)
-	ptr := uint64(0)
-	if db.page.nfree < db.free.Total() {
-		// reuse a deallocated page
-		ptr = db.free.Get(db.page.nfree)
-		db.page.nfree++
-	} else {
-		// append a new page
-		ptr = db.page.flushed + uint64(db.page.nappend)
-		db.page.nappend++
+	ptr := db.free.Pop()
+	if ptr == 0 {
+		ptr = db.free.new(node)
 	}
 	db.page.updates[ptr] = node.data
 	return ptr
 }
 
-func (db *KV) pageDel(ptr uint64) {
+func (db *KVTX) pageDel(ptr uint64) {
 	db.page.updates[ptr] = nil
 }
 
-func pageGetMapped(db *KV, ptr uint64) BNode {
+func (db *KVReader) pageGetMapped(ptr uint64) BNode {
 	start := uint64(0)
 	for _, chunk := range db.mmap.chunks {
 		end := start + uint64(len(chunk))/BTREE_PAGE_SIZE
@@ -310,14 +357,14 @@ func pageGetMapped(db *KV, ptr uint64) BNode {
 }
 
 // callback for Freelist, allocate new page
-func (db *KV) pageAppend(node BNode) uint64 {
+func (db *KVTX) pageAppend(node BNode) uint64 {
 	assert(len(node.data) <= BTREE_PAGE_SIZE)
-	ptr := db.page.flushed + uint64(db.page.nappend)
+	ptr := uint64(db.page.nappend) + db.kv.page.flushed
 	db.page.nappend++
 	db.page.updates[ptr] = node.data
 	return ptr
 }
 
-func (db *KV) pageUse(ptr uint64, node BNode) {
+func (db *KVTX) pageUse(ptr uint64, node BNode) {
 	db.page.updates[ptr] = node.data
 }

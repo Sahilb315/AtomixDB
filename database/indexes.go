@@ -10,7 +10,7 @@ const (
 	INDEX_DEL = 2
 )
 
-func indexOp(db *DB, tdef *TableDef, rec Record, op int) {
+func indexOp(db *DB, tdef *TableDef, rec Record, op int, kvtx *KVTX) {
 	key := make([]byte, 0, 256)
 	irec := make([]Value, len(rec.Cols))
 
@@ -23,9 +23,9 @@ func indexOp(db *DB, tdef *TableDef, rec Record, op int) {
 		done, err := false, error(nil)
 		switch op {
 		case INDEX_ADD:
-			done, err = db.kv.SetWithMode(&InsertReq{Key: key})
+			done, err = kvtx.SetWithMode(&InsertReq{Key: key})
 		case INDEX_DEL:
-			done, err = db.kv.Delete(&DeleteReq{Key: key})
+			done, err = kvtx.Delete(&DeleteReq{Key: key})
 		default:
 			panic("invalid index op")
 		}
@@ -49,7 +49,7 @@ func encodeKeyPartial(
 
 loop:
 	for i := len(values); max && i < len(keys); i++ {
-		switch tdef.Types[colIndex(tdef, keys[i])] {
+		switch tdef.Types[ColIndex(tdef, keys[i])] {
 		case TYPE_BYTES:
 			out = append(out, 0xff)
 			//	Any byte string with a prefix of [X, 0xFF] will be greater than all byte strings with prefix [X]
@@ -130,7 +130,7 @@ func isValidCol(tdef *TableDef, col string) bool {
 	return false
 }
 
-func colIndex(tdef *TableDef, col string) int {
+func ColIndex(tdef *TableDef, col string) int {
 	for i, c := range tdef.Cols {
 		if c == col {
 			return i

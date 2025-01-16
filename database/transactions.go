@@ -1,6 +1,9 @@
 package database
 
-import "fmt"
+import (
+	"container/heap"
+	"fmt"
+)
 
 // DB transaction
 type DBTX struct {
@@ -8,66 +11,118 @@ type DBTX struct {
 	db *DB
 }
 
+type KVReader struct {
+	// snapshot
+	version uint64
+	Tree    BTree
+	mmap    struct {
+		chunks [][]byte // copied from sttruct KV, read-only
+	}
+	index int
+}
+
 // KV Transaction
 type KVTX struct {
-	kv *KV
-	// for the rollback
-	tree struct {
-		root uint64
+	KVReader
+	kv   *KV
+	free FreeList
+	page struct {
+		nappend int // no of pages to be appended
+		// newly allocated or deallocated pages keyed by the pointer.
+		// nil value denotes a deallocated page.
+		updates map[uint64][]byte
 	}
-	free struct {
-		head uint64
+}
+
+func (db *DB) ConcurrentRead(tableName string, record Record) chan ReadResult {
+	resultChan := make(chan ReadResult, 1)
+
+	go func(resultChan chan ReadResult) {
+		defer close(resultChan)
+
+		var kvReader KVReader
+		defer db.KV.EndRead(&kvReader)
+		db.KV.BeginRead(&kvReader)
+
+		// found, err := db.GetKVReader(tableName, &record, kvReader)
+		found, err := db.Get(tableName, &record, &kvReader)
+
+		resultChan <- ReadResult{
+			Record: record,
+			Found:  found,
+			Error:  err,
+		}
+	}(resultChan)
+
+	return resultChan
+}
+func (db *DB) GetKVReader(table string, rec *Record, kv KVReader) (bool, error) {
+	tdef := GetTableDef(db, table, &kv.Tree)
+	if tdef == nil {
+		return false, fmt.Errorf("table not found: %s", table)
 	}
+	return dbGet(db, tdef, rec, &kv.Tree)
+}
+
+// initialising the reader from the kv
+func (kv *KV) BeginRead(tx *KVReader) {
+	kv.mu.Lock()
+	tx.mmap.chunks = kv.mmap.chunks
+	tx.Tree.root = kv.tree.root
+	tx.Tree.get = tx.pageGetMapped
+	tx.version = kv.version
+	heap.Push(&kv.readers, tx)
+	kv.mu.Unlock()
+}
+
+func (kv *KV) EndRead(tx *KVReader) {
+	kv.mu.Lock()
+	heap.Remove(&kv.readers, tx.index)
+	kv.mu.Unlock()
+}
+
+func (tx *KVReader) Seek(key []byte, cmp int) *BIter {
+	return tx.Tree.Seek(key, cmp)
 }
 
 func (db *DB) Begin(tx *DBTX) {
 	tx.db = db
-	db.kv.Begin(&tx.kv)
+	db.KV.Begin(&tx.kv)
 }
 
 func (db *DB) Commit(tx *DBTX) error {
-	return db.kv.Commit(&tx.kv)
+	return db.KV.Commit(&tx.kv)
 }
 
 func (db *DB) Abort(tx *DBTX) {
-	db.kv.Abort(&tx.kv)
+	db.KV.Abort(&tx.kv)
 }
 
 func (tx *DBTX) TableNew(tdef *TableDef) error {
-	return tx.db.TableNew(tdef)
-}
-
-func (tx *DBTX) Get(table string, rec *Record) (bool, error) {
-	return tx.db.Get(table, rec)
+	return tx.db.TableNew(tdef, &tx.kv)
 }
 
 func (tx *DBTX) Set(table string, rec Record, mode int) (bool, error) {
-	return tx.db.Set(table, rec, mode)
+	return tx.db.Set(table, rec, mode, &tx.kv)
 }
 
 func (tx *DBTX) Delete(table string, rec Record) (bool, error) {
-	return tx.db.Delete(table, rec)
+	return tx.db.Delete(table, rec, &tx.kv)
 }
 
 func (tx *DBTX) Scan(table string, req *Scanner) error {
-	return tx.db.Scan(table, req)
-}
-
-// begin a transaction
-func (kv *KV) Begin(tx *KVTX) {
-	tx.kv = kv
-	tx.tree.root = kv.tree.root
-	tx.free.head = kv.free.head
+	return tx.db.Scan(table, req, &tx.kv.Tree)
 }
 
 // end a transaction: commit updates
 func (kv *KV) Commit(tx *KVTX) error {
-	if kv.tree.root == tx.tree.root {
+	defer kv.writer.Unlock()
+	if kv.tree.root == tx.Tree.root {
 		return nil // no updates
 	}
 
 	// phase 1: persist the page data to disk
-	if err := writePages(kv); err != nil {
+	if err := writePages(tx); err != nil {
 		rollbackTX(tx)
 		return err
 	}
@@ -80,15 +135,18 @@ func (kv *KV) Commit(tx *KVTX) error {
 	}
 
 	// transaction is visible
-	kv.page.flushed = uint64(kv.page.nappend)
-	kv.page.nfree = 0
-	kv.page.nappend = 0
-	kv.page.updates = map[uint64][]byte{}
+	kv.page.flushed += uint64(tx.page.nappend)
+	kv.free = tx.free.FreeListData
+	kv.mu.Lock()
+	kv.tree.root = tx.Tree.root
+	kv.version++
+	kv.mu.Unlock()
 
 	// phase 2: update the master page to point to new tree
 	if err := masterStore(kv); err != nil {
 		return err
 	}
+
 	if err := kv.fp.Sync(); err != nil {
 		return fmt.Errorf("fsync: %w", err)
 	}
@@ -97,33 +155,25 @@ func (kv *KV) Commit(tx *KVTX) error {
 
 // end a transaction: rollback
 func (kv *KV) Abort(tx *KVTX) {
-	rollbackTX(tx)
-}
-
-// KV Operations
-func (tx *KVTX) Get(key []byte) ([]byte, bool) {
-	return tx.kv.tree.Get(key)
+	kv.writer.Unlock()
 }
 
 func (tx *KVTX) Seek(key []byte, cmp int) *BIter {
-	return tx.kv.tree.Seek(key, cmp)
+	return tx.Tree.Seek(key, cmp)
 }
 
 func (tx *KVTX) Update(req *InsertReq) bool {
-	tx.kv.tree.InsertEx(req)
+	tx.Tree.InsertEx(req)
 	return req.Added
 }
 
 func (tx *KVTX) Del(req *DeleteReq) bool {
-	return tx.kv.tree.DeleteEx(req)
+	return tx.Tree.DeleteEx(req)
 }
 
 // rollbackTX the tree & other in-memmory data structures
 func rollbackTX(tx *KVTX) {
 	kv := tx.kv
-	kv.tree.root = tx.tree.root
+	kv.tree.root = tx.Tree.root
 	kv.free.head = tx.free.head
-	kv.page.nfree = 0
-	kv.page.nappend = 0
-	kv.page.updates = map[uint64][]byte{}
 }

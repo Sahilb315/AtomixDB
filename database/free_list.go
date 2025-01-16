@@ -4,8 +4,23 @@ import (
 	"encoding/binary"
 )
 
-type FreeList struct {
+type FreeListData struct {
 	head uint64
+	// cached pointers to list nodes for accessing both ends
+	nodes []uint64 // from tail to head
+	// cached total number of items; stored in the head node
+	total int
+	// cached number of discarded items in the tail nodes
+	offset int
+}
+
+type FreeList struct {
+	FreeListData
+	// for each transaction
+	version   uint64   // current version
+	minReader uint64   // minimum reader version
+	freed     []uint64 // pages that will be added to the free list
+
 	// callbacks for managing on-disk pages
 	get func(uint64) BNode  // de-reference a pointer
 	new func(BNode) uint64  // append a new page
@@ -13,12 +28,93 @@ type FreeList struct {
 }
 
 // Free List Node Format
-// | type | size | total | next |  pointers |
-// |  2B  |  2B  |   8B  |  8B  | size * 8B |
+// | type | size | total | next |  pointers-version-pairs |
+// |  2B  |  2B  |   8B  |  8B  |       size * 16B        |
 
-const BNODE_FREE_LIST = 3
-const FREE_LIST_HEADER = 4 + 8 + 8
-const FREE_LIST_CAP = (BTREE_PAGE_SIZE - FREE_LIST_HEADER) / 8
+const (
+	BNODE_FREE_LIST  = 3
+	FREE_LIST_HEADER = 4 + 8 + 8
+	FREE_LIST_CAP    = (BTREE_PAGE_SIZE - FREE_LIST_HEADER) / 8
+)
+
+func (fl *FreeList) Pop() uint64 {
+	fl.loadCache()
+	return flPop1(fl)
+}
+
+func (fl *FreeList) Add(freed []uint64) {
+	if len(freed) == 0 {
+		return
+	}
+	total := fl.Total() + len(freed)
+	flPush(fl, freed, nil)
+	if fl.head != 0 {
+		flnSetTotal(fl.get(fl.head), uint64(total))
+	}
+}
+
+func (fl *FreeList) loadCache() {
+	if len(fl.nodes) > 0 {
+		return
+	}
+
+	curr := fl.head
+	if curr == 0 {
+		fl.total = 0
+		fl.offset = 0
+		return
+	}
+
+	var nodes []uint64
+	for curr != 0 {
+		nodes = append(nodes, curr)
+		node := fl.get(curr)
+		curr = flnNext(node)
+	}
+
+	for i := 0; i < len(nodes)/2; i++ {
+		nodes[i], nodes[len(nodes)-1-i] = nodes[len(nodes)-1-i], nodes[i]
+	}
+
+	fl.nodes = nodes
+	headNode := fl.get(fl.head)
+	fl.total = flnSize(headNode)
+	fl.offset = 0
+}
+
+func flPop1(fl *FreeList) uint64 {
+	if fl.total == 0 {
+		return 0
+	}
+
+	assert(fl.offset < flnSize(fl.get(fl.nodes[0])))
+	ptr, ver := flnItem(fl.get(fl.nodes[0]), fl.offset)
+	if versionBefore(fl.minReader, ver) {
+		// cannot use; possibly reachable by the minimum version reader
+		return 0
+	}
+	fl.offset++
+	fl.total--
+	if fl.offset >= flnSize(fl.get(fl.nodes[0])) {
+		fl.nodes = fl.nodes[1:]
+		fl.offset = 0
+	}
+	return ptr
+}
+
+func versionBefore(u uint64, ver uint64) bool {
+	return int64(u-ver) < 0
+}
+
+func flnItem(node BNode, offset int) (uint64, uint64) {
+	pos := FREE_LIST_HEADER + offset*16
+	if len(node.data) < int(pos)+16 {
+		return 0, 0
+	}
+	ptr := binary.LittleEndian.Uint64(node.data[pos : pos+8])
+	ver := binary.LittleEndian.Uint64(node.data[pos+8 : pos+16])
+	return ptr, ver
+}
 
 func flnSize(node BNode) int {
 	return int(node.nKeys())
@@ -35,10 +131,12 @@ func flnPtr(node BNode, idx int) uint64 {
 func flnSetPtr(node BNode, idx int, ptr uint64) {
 	binary.LittleEndian.PutUint64(node.data[FREE_LIST_HEADER+idx*8:], ptr)
 }
+
 func flnSetHeader(node BNode, size uint16, next uint64) {
 	binary.LittleEndian.PutUint16(node.data[2:], size)
 	binary.LittleEndian.PutUint64(node.data[4+8:], next)
 }
+
 func flnSetTotal(node BNode, total uint64) {
 	binary.LittleEndian.PutUint64(node.data[4:], total)
 }

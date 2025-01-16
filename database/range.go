@@ -28,15 +28,15 @@ type Scanner struct {
 	keyStart []byte // the encoded Key2
 }
 
-func (db *DB) Scan(table string, req *Scanner) error {
-	tdef := getTableDef(db, table)
+func (db *DB) Scan(table string, req *Scanner, tree *BTree) error {
+	tdef := GetTableDef(db, table, tree)
 	if tdef == nil {
 		return fmt.Errorf("table not found: %s", table)
 	}
-	return dbScan(db, tdef, req)
+	return dbScan(db, tdef, req, tree)
 }
 
-func dbScan(db *DB, tdef *TableDef, req *Scanner) error {
+func dbScan(db *DB, tdef *TableDef, req *Scanner, tree *BTree) error {
 	// sanity checks
 	switch {
 	case req.Cmp1 > 0 && req.Cmp2 < 0:
@@ -60,7 +60,7 @@ func dbScan(db *DB, tdef *TableDef, req *Scanner) error {
 	// seek to the start key
 	req.keyStart = encodeKeyPartial(nil, prefix, req.Key1.Vals, tdef, index, req.Cmp1)
 	req.keyEnd = encodeKeyPartial(nil, prefix, req.Key2.Vals, tdef, index, req.Cmp2)
-	req.iter = db.kv.tree.Seek(req.keyStart, req.Cmp1)
+	req.iter = tree.Seek(req.keyStart, req.Cmp1)
 	return nil
 }
 
@@ -88,7 +88,7 @@ func (sc *Scanner) Next() {
 }
 
 // fetch the current row
-func (sc *Scanner) Deref(rec *Record) {
+func (sc *Scanner) Deref(rec *Record, tree *BTree) {
 	if !sc.Valid() {
 		return
 	}
@@ -108,7 +108,7 @@ func (sc *Scanner) Deref(rec *Record) {
 		index := tdef.Indexes[sc.indexNo]
 		ival := make([]Value, len(index))
 		for i, col := range index {
-			ival[i].Type = tdef.Types[colIndex(tdef, col)]
+			ival[i].Type = tdef.Types[ColIndex(tdef, col)]
 		}
 		decodeValues(key[4:], ival)
 		icol := Record{index, ival}
@@ -118,7 +118,7 @@ func (sc *Scanner) Deref(rec *Record) {
 			rec.Vals = append(rec.Vals, *icol.Get(col))
 		}
 
-		ok, err := dbGet(sc.db, tdef, rec)
+		ok, err := dbGet(sc.db, tdef, rec, tree)
 		if !ok && err != nil {
 			fmt.Println("Error getting record from DB")
 		}
