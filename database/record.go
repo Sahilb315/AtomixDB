@@ -28,8 +28,9 @@ type Value struct {
 
 type DB struct {
 	Path   string
-	KV     KV
-	Tables map[string]*TableDef // cached table definition
+	kv     KV
+	pool   *WorkerPool
+	tables map[string]*TableDef // cached table definition
 }
 
 type TableDef struct {
@@ -87,14 +88,14 @@ func (rec *Record) Get(key string) *Value {
 }
 
 func GetTableDef(db *DB, name string, tree *BTree) *TableDef {
-	tdef, ok := db.Tables[name]
+	tdef, ok := db.tables[name]
 	if !ok {
-		if db.Tables == nil {
-			db.Tables = map[string]*TableDef{}
+		if db.tables == nil {
+			db.tables = map[string]*TableDef{}
 		}
 		tdef = getTableDefDB(db, name, tree)
 		if tdef != nil {
-			db.Tables[name] = tdef
+			db.tables[name] = tdef
 		}
 	}
 	return tdef

@@ -34,36 +34,6 @@ type KVTX struct {
 	}
 }
 
-func (db *DB) ConcurrentRead(tableName string, record Record) chan ReadResult {
-	resultChan := make(chan ReadResult, 1)
-
-	go func(resultChan chan ReadResult) {
-		defer close(resultChan)
-
-		var kvReader KVReader
-		defer db.KV.EndRead(&kvReader)
-		db.KV.BeginRead(&kvReader)
-
-		// found, err := db.GetKVReader(tableName, &record, kvReader)
-		found, err := db.Get(tableName, &record, &kvReader)
-
-		resultChan <- ReadResult{
-			Record: record,
-			Found:  found,
-			Error:  err,
-		}
-	}(resultChan)
-
-	return resultChan
-}
-func (db *DB) GetKVReader(table string, rec *Record, kv KVReader) (bool, error) {
-	tdef := GetTableDef(db, table, &kv.Tree)
-	if tdef == nil {
-		return false, fmt.Errorf("table not found: %s", table)
-	}
-	return dbGet(db, tdef, rec, &kv.Tree)
-}
-
 // initialising the reader from the kv
 func (kv *KV) BeginRead(tx *KVReader) {
 	kv.mu.Lock()
@@ -87,15 +57,15 @@ func (tx *KVReader) Seek(key []byte, cmp int) *BIter {
 
 func (db *DB) Begin(tx *DBTX) {
 	tx.db = db
-	db.KV.Begin(&tx.kv)
+	db.kv.Begin(&tx.kv)
 }
 
 func (db *DB) Commit(tx *DBTX) error {
-	return db.KV.Commit(&tx.kv)
+	return db.kv.Commit(&tx.kv)
 }
 
 func (db *DB) Abort(tx *DBTX) {
-	db.KV.Abort(&tx.kv)
+	db.kv.Abort(&tx.kv)
 }
 
 func (tx *DBTX) TableNew(tdef *TableDef) error {
@@ -173,7 +143,8 @@ func (tx *KVTX) Del(req *DeleteReq) bool {
 
 // rollbackTX the tree & other in-memmory data structures
 func rollbackTX(tx *KVTX) {
-	kv := tx.kv
-	kv.tree.root = tx.Tree.root
-	kv.free.head = tx.free.head
+	tx.kv.tree.root = tx.Tree.root
+	tx.kv.free = tx.free.FreeListData
+	tx.page.nappend = 0
+	tx.page.updates = make(map[uint64][]byte)
 }

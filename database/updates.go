@@ -248,7 +248,7 @@ func (db *KVTX) SetWithMode(req *InsertReq) (bool, error) {
 			req.Old = old
 			return true, err
 		}
-		return false, errors.New("key does not exist")
+		return false, errors.New("record does not exist")
 
 	case MODE_UPSERT:
 		old, exists := db.Get(req.Key)
@@ -266,7 +266,7 @@ func (db *KVTX) SetWithMode(req *InsertReq) (bool, error) {
 			req.Added = true
 			return true, err
 		}
-		return false, errors.New("key already exists")
+		return false, errors.New("record already exists")
 
 	default:
 		return false, errors.New("invalid update mode")

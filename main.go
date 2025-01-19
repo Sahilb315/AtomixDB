@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	database.StoreImpl()
+	database.StartDB()
 }
 
 // Issues -

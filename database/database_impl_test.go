@@ -11,11 +11,11 @@ package database
 //
 // 	db := &DB{
 // 		Path:   "test.db",
-// 		kv:   *newKVTX("test.db"),
-// 		tables: make(map[string]*TableDef),
+// 		KV:     *newKV("test.db"),
+// 		Tables: make(map[string]*TableDef),
 // 	}
 //
-// 	if err := db.kv.kv.Open(); err != nil {
+// 	if err := db.KV.Open(); err != nil {
 // 		t.Fatalf("Failed to open test database: %v", err)
 // 	}
 //
@@ -27,12 +27,13 @@ package database
 // }
 //
 // func cleanupTestDB(t *testing.T, db *DB) {
-// 	db.kv.kv.Close()
+// 	db.KV.Close()
 // 	os.Remove("test.db")
 // }
 //
 // func TestTableCreation(t *testing.T) {
 // 	db := setupTestDB(t)
+// 	kvtx := KVTX{}
 // 	defer cleanupTestDB(t, db)
 //
 // 	tests := []struct {
@@ -78,10 +79,14 @@ package database
 //
 // 	for _, tt := range tests {
 // 		t.Run(tt.name, func(t *testing.T) {
-// 			err := db.TableNew(tt.tdef)
+// 			db.KV.Begin(&kvtx)
+// 			err := db.TableNew(tt.tdef, &kvtx)
+//
 // 			if (err != nil) != tt.wantErr {
+// 				db.KV.Abort(&kvtx)
 // 				t.Errorf("TableNew() error = %v, wantErr %v", err, tt.wantErr)
 // 			}
+// 			db.KV.Commit(&kvtx)
 // 		})
 // 	}
 // }

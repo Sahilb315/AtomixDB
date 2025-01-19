@@ -9,6 +9,19 @@ import (
 
 type Command func(scanner *bufio.Reader, db *DB, currentTX *DBTX)
 
+type GetRequest struct {
+	tableName string
+	cols      []string
+	vals      []string
+	response  chan GetResponse
+}
+
+type GetResponse struct {
+	record Record
+	found  bool
+	err    error
+}
+
 func RegisterCommands() map[string]Command {
 	return map[string]Command{
 		"create": HandleCreate,
@@ -40,12 +53,12 @@ func HandleCreate(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 			fmt.Printf("Table '%s' created successfully.\n", td.Name)
 		}
 	} else {
-		db.KV.Begin(&writer)
+		db.kv.Begin(&writer)
 		if err := db.TableNew(tdef, &writer); err != nil {
-			db.KV.Abort(&writer)
+			db.kv.Abort(&writer)
 			fmt.Println("Error creating table: ", err)
 		} else {
-			db.KV.Commit(&writer)
+			db.kv.Commit(&writer)
 			fmt.Printf("Table '%s' created successfully.\n", td.Name)
 		}
 	}
@@ -61,9 +74,9 @@ func HandleInsert(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 
 	var writer KVTX
 	var reader KVReader
-	db.KV.BeginRead(&reader)
+	db.kv.BeginRead(&reader)
 	tdef := GetTableDef(db, tableName, &reader.Tree)
-	db.KV.EndRead(&reader)
+	db.kv.EndRead(&reader)
 	if tdef == nil {
 		fmt.Printf("Table '%s' not found.\n", tableName)
 		return
@@ -94,15 +107,15 @@ func HandleInsert(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 			fmt.Println("Failed to insert record.")
 		}
 	} else {
-		db.KV.Begin(&writer)
+		db.kv.Begin(&writer)
 		if inserted, err := db.Insert(tableName, rec, &writer); err != nil {
-			db.KV.Abort(&writer)
+			db.kv.Abort(&writer)
 			fmt.Println("Failed to insert: ", err.Error())
 		} else if inserted {
-			db.KV.Commit(&writer)
+			db.kv.Commit(&writer)
 			fmt.Println("Record inserted successfully.")
 		} else {
-			db.KV.Abort(&writer)
+			db.kv.Abort(&writer)
 			fmt.Println("Failed to insert record.")
 		}
 	}
@@ -117,9 +130,9 @@ func HandleDelete(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 
 	var writer KVTX
 	var reader KVReader
-	db.KV.BeginRead(&reader)
+	db.kv.BeginRead(&reader)
 	tdef := GetTableDef(db, tableName, &reader.Tree)
-	db.KV.EndRead(&reader)
+	db.kv.EndRead(&reader)
 	if tdef == nil {
 		fmt.Printf("Table '%s' not found.\n", tableName)
 		return
@@ -151,77 +164,53 @@ func HandleDelete(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 			fmt.Println("Failed to delete record.")
 		}
 	} else {
-		db.KV.Begin(&writer)
+		db.kv.Begin(&writer)
 		if deleted, err := db.Delete(tableName, rec, &writer); err != nil {
 			fmt.Println("Failed to delete: ", err.Error())
 		} else if deleted {
-			db.KV.Commit(&writer)
+			db.kv.Commit(&writer)
 			fmt.Println("Record deleted successfully.")
 		} else {
-			db.KV.Abort(&writer)
+			db.kv.Abort(&writer)
 			fmt.Println("Failed to delete record.")
 		}
 	}
 }
 
 func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
+	responseChan := make(chan GetResponse, 1)
+
 	tableName := helper.GetTableName(scanner)
-	rec := Record{
-		Cols: []string{},
-		Vals: []Value{},
-	}
-	var reader KVReader
-	db.KV.BeginRead(&reader)
-	tdef := GetTableDef(db, tableName, &reader.Tree)
-	db.KV.EndRead(&reader)
-	if tdef == nil {
-		fmt.Printf("Table '%s' not found.\n", tableName)
-		return
-	}
+
 	fmt.Printf("Enter primary key or index col: ")
 	colStr, _ := scanner.ReadString('\n')
 	colStr = strings.TrimSpace(colStr)
-
 	splitCol := strings.Split(colStr, ",")
-	if len(splitCol) > 1 {
-		for _, col := range splitCol {
-			fmt.Printf("Enter value for col %s: ", col)
-			valStr, _ := scanner.ReadString('\n')
-			valStr = strings.TrimSpace(valStr)
-			var val Value
-			idx := ColIndex(tdef, colStr)
-			if tdef.Types[idx] == TYPE_BYTES {
-				val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
-			} else {
-				var key int64
-				fmt.Sscanf(valStr, "%d", &key)
-				val = Value{Type: TYPE_INT64, I64: key}
-			}
-			rec.Cols = append(rec.Cols, col)
-			rec.Vals = append(rec.Vals, val)
-		}
-	} else {
-		fmt.Printf("Enter value for col %s: ", colStr)
+
+	vals := make([]string, 0)
+	for _, col := range splitCol {
+		fmt.Printf("Enter value for col %s: ", col)
 		valStr, _ := scanner.ReadString('\n')
-		valStr = strings.TrimSpace(valStr)
-		var val Value
-		idx := ColIndex(tdef, colStr)
-		if tdef.Types[idx] == TYPE_BYTES {
-			val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
-		} else {
-			var key int64
-			fmt.Sscanf(valStr, "%d", &key)
-			val = Value{Type: TYPE_INT64, I64: key}
-		}
-		rec.Cols = append(rec.Cols, colStr)
-		rec.Vals = append(rec.Vals, val)
+		vals = append(vals, strings.TrimSpace(valStr))
 	}
-	resultChan := db.ConcurrentRead(tableName, rec)
-	result := <-resultChan
-	if result.Found {
-		printRecord(result.Record)
-	} else if result.Error != nil {
-		fmt.Println("Error while retrieveing value: ", result.Error.Error())
+
+	db.pool.Submit(func() {
+		req := GetRequest{
+			tableName: tableName,
+			cols:      splitCol,
+			vals:      vals,
+			response:  responseChan,
+		}
+		processGetRequest(req, db)
+	})
+
+	response := <-responseChan
+	if response.err != nil {
+		fmt.Println("Error:", response.err)
+		return
+	}
+	if response.found {
+		printRecord(response.record)
 	} else {
 		fmt.Println("Record not found")
 	}
@@ -237,9 +226,9 @@ func HandleUpdate(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 
 	var writer KVTX
 	var reader KVReader
-	db.KV.BeginRead(&reader)
+	db.kv.BeginRead(&reader)
 	tdef := GetTableDef(db, tableName, &reader.Tree)
-	db.KV.EndRead(&reader)
+	db.kv.EndRead(&reader)
 
 	if tdef == nil {
 		fmt.Printf("Table '%s' not found.\n", tableName)
@@ -275,15 +264,15 @@ func HandleUpdate(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 			fmt.Println("Failed to update record.")
 		}
 	} else {
-		db.KV.Begin(&writer)
+		db.kv.Begin(&writer)
 		if updated, err := db.Update(tableName, rec, &writer); err != nil {
-			db.KV.Abort(&writer)
+			db.kv.Abort(&writer)
 			fmt.Println("Error while updating: ", err.Error())
 		} else if updated {
-			db.KV.Commit(&writer)
+			db.kv.Commit(&writer)
 			printRecord(rec)
 		} else {
-			db.KV.Abort(&writer)
+			db.kv.Abort(&writer)
 			fmt.Println("Failed to update record.")
 		}
 	}
@@ -324,5 +313,72 @@ func HandleAbort(scanner *bufio.Reader, db *DB, currentTX *DBTX) *DBTX {
 
 	db.Abort(currentTX)
 	fmt.Println("Transaction aborted.")
+	return nil
+}
+
+func processGetRequest(req GetRequest, db *DB) {
+	var reader KVReader
+	db.kv.BeginRead(&reader)
+	tdef := GetTableDef(db, req.tableName, &reader.Tree)
+	db.kv.EndRead(&reader)
+
+	if tdef == nil {
+		req.response <- GetResponse{err: fmt.Errorf("table '%s' not found", req.tableName)}
+		return
+	}
+
+	if err := verifyColumns(tdef, req.cols); err != nil {
+		req.response <- GetResponse{
+			record: Record{},
+			found:  false,
+			err:    err,
+		}
+		return
+	}
+	rec := Record{
+		Cols: make([]string, len(req.cols)),
+		Vals: make([]Value, len(req.cols)),
+	}
+
+	for i, col := range req.cols {
+		idx := ColIndex(tdef, col)
+		if tdef.Types[idx] == TYPE_BYTES {
+			rec.Vals[i] = Value{Type: TYPE_BYTES, Str: []byte(req.vals[i])}
+		} else {
+			var key int64
+			fmt.Sscanf(req.vals[i], "%d", &key)
+			rec.Vals[i] = Value{Type: TYPE_INT64, I64: key}
+		}
+		rec.Cols[i] = col
+	}
+
+	var kvReader KVReader
+	defer db.kv.EndRead(&kvReader)
+	db.kv.BeginRead(&kvReader)
+
+	found, err := db.Get(req.tableName, &rec, &kvReader)
+	req.response <- GetResponse{
+		record: rec,
+		found:  found,
+		err:    err,
+	}
+}
+
+func verifyColumns(tableDef *TableDef, userCols []string) error {
+	colMap := make(map[string]bool)
+	for _, col := range tableDef.Cols {
+		colMap[col] = true
+	}
+
+	var invalidCols []string
+	for _, col := range userCols {
+		if !colMap[col] {
+			invalidCols = append(invalidCols, col)
+		}
+	}
+
+	if len(invalidCols) > 0 {
+		return fmt.Errorf("invalid columns: %v", invalidCols)
+	}
 	return nil
 }

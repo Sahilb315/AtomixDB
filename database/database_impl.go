@@ -7,17 +7,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"reflect"
 	"strings"
-	"sync"
 	"syscall"
 )
-
-type ReadResult struct {
-	Record Record
-	Error  error
-	Found  bool
-}
 
 func newKV(filename string) *KV {
 	return &KV{
@@ -25,52 +17,44 @@ func newKV(filename string) *KV {
 	}
 }
 
-var fileName string = "database.db"
-
 func newDB() *DB {
 	return &DB{
 		Path:   fileName,
-		KV:     *newKV(fileName),
-		Tables: make(map[string]*TableDef),
+		kv:     *newKV(fileName),
+		tables: make(map[string]*TableDef),
+		pool:   NewPool(3),
 	}
 }
 
-const mutexLocked = 1
-
-func MutexLocked(m *sync.Mutex) bool {
-	state := reflect.ValueOf(m).Elem().FieldByName("state")
-	return state.Int()&mutexLocked == mutexLocked
-}
+const fileName string = "database.db"
 
 func initializeInternalTables(db *DB) error {
 	var writer KVTX
-	db.KV.Begin(&writer)
+	db.kv.Begin(&writer)
 	if err := db.TableNew(TDEF_META, &writer); err != nil {
-		db.KV.Abort(&writer)
+		db.kv.Abort(&writer)
 		if !strings.Contains(err.Error(), "table exists") {
 			return fmt.Errorf("failed to create TDEF_META: %v", err)
 		}
 		fmt.Println("TDEF_META already exists")
 	}
-	db.KV.Commit(&writer)
-	fmt.Println("Mutex lock after meta table comp: ", MutexLocked(&db.KV.writer))
-	db.KV.Begin(&writer)
+	db.kv.Commit(&writer)
+	db.kv.Begin(&writer)
 	if err := db.TableNew(TDEF_TABLE, &writer); err != nil {
-		db.KV.Abort(&writer)
+		db.kv.Abort(&writer)
 		if !strings.Contains(err.Error(), "table exists") {
 			return fmt.Errorf("failed to create TDEF_TABLE: %v", err)
 		}
 		fmt.Println("TDEF_TABLE already exists")
 	}
-	db.KV.Commit(&writer)
-	fmt.Println("Mutex lock after def table comp: ", MutexLocked(&db.KV.writer))
+	db.kv.Commit(&writer)
 	return nil
 }
 
-func StoreImpl() {
+func StartDB() {
 	scanner := bufio.NewReader(os.Stdin)
-	db := newDB() // Initialize the database
-	if err := db.KV.Open(); err != nil {
+	db := newDB()
+	if err := db.kv.Open(); err != nil {
 		log.Fatalf("Failed to open  %v", err)
 	}
 	err := initializeInternalTables(db)
@@ -85,8 +69,7 @@ func StoreImpl() {
 
 	go func() {
 		<-sigChan
-		db.KV.Close()
-		os.Exit(0)
+		shutdownDB(db)
 	}()
 
 	commands := RegisterCommands()
@@ -101,8 +84,7 @@ func StoreImpl() {
 			continue
 		}
 
-		command := strings.TrimSpace(string(line))
-		command = strings.ToLower(command)
+		command := strings.ToLower(strings.TrimSpace(string(line)))
 		if handler, exists := commands[command]; exists {
 			switch command {
 			case "begin":
@@ -115,14 +97,19 @@ func StoreImpl() {
 				handler(scanner, db, currentTX)
 			}
 		} else if command == "exit" {
-			db.KV.Close()
-			fmt.Println("Exiting...")
+			shutdownDB(db)
 			break
 		} else {
 			fmt.Println("Unknown command:", command)
 		}
 	}
+}
 
+func shutdownDB(db *DB) {
+	db.kv.Close()
+	db.pool.Stop()
+	fmt.Println("Exiting...")
+	os.Exit(0)
 }
 
 func formatValue(v Value) string {
