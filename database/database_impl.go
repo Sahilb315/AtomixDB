@@ -102,9 +102,19 @@ func StoreImpl() {
 		}
 
 		command := strings.TrimSpace(string(line))
+		command = strings.ToLower(command)
 		if handler, exists := commands[command]; exists {
-			handler(scanner, db, currentTX)
-		} else if command == "EXIT" {
+			switch command {
+			case "begin":
+				currentTX = HandleBegin(scanner, db, currentTX)
+			case "commit":
+				currentTX = HandleCommit(scanner, db, currentTX)
+			case "abort":
+				currentTX = HandleAbort(scanner, db, currentTX)
+			default:
+				handler(scanner, db, currentTX)
+			}
+		} else if command == "exit" {
 			db.KV.Close()
 			fmt.Println("Exiting...")
 			break
@@ -112,6 +122,7 @@ func StoreImpl() {
 			fmt.Println("Unknown command:", command)
 		}
 	}
+
 }
 
 func formatValue(v Value) string {

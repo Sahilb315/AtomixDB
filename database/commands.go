@@ -11,14 +11,14 @@ type Command func(scanner *bufio.Reader, db *DB, currentTX *DBTX)
 
 func RegisterCommands() map[string]Command {
 	return map[string]Command{
-		"CREATE": HandleCreate,
-		"INSERT": HandleInsert,
-		"DELETE": HandleDelete,
-		"GET":    HandleGet,
-		"UPDATE": HandleUpdate,
-		"BEGIN":  HandleBegin,
-		"ABORT":  HandleAbort,
-		"COMMIT": HandleCommit,
+		"create": HandleCreate,
+		"insert": HandleInsert,
+		"delete": HandleDelete,
+		"get":    HandleGet,
+		"update": HandleUpdate,
+		"begin":  func(scanner *bufio.Reader, db *DB, currentTX *DBTX) {},
+		"abort":  func(scanner *bufio.Reader, db *DB, currentTX *DBTX) {},
+		"commit": func(scanner *bufio.Reader, db *DB, currentTX *DBTX) {},
 	}
 }
 
@@ -33,13 +33,21 @@ func HandleCreate(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 		PKeys:       1,
 		IndexPrefix: make([]uint32, 0),
 	}
-	db.KV.Begin(&writer)
-	if err := db.TableNew(tdef, &writer); err != nil {
-		db.KV.Abort(&writer)
-		fmt.Println("Error creating table: ", err)
+	if currentTX != nil {
+		if err := db.TableNew(tdef, &writer); err != nil {
+			fmt.Println("Error creating table: ", err)
+		} else {
+			fmt.Printf("Table '%s' created successfully.\n", td.Name)
+		}
 	} else {
-		db.KV.Commit(&writer)
-		fmt.Printf("Table '%s' created successfully.\n", td.Name)
+		db.KV.Begin(&writer)
+		if err := db.TableNew(tdef, &writer); err != nil {
+			db.KV.Abort(&writer)
+			fmt.Println("Error creating table: ", err)
+		} else {
+			db.KV.Commit(&writer)
+			fmt.Printf("Table '%s' created successfully.\n", td.Name)
+		}
 	}
 }
 
@@ -281,35 +289,40 @@ func HandleUpdate(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	}
 }
 
-func HandleBegin(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
+func HandleBegin(scanner *bufio.Reader, db *DB, currentTX *DBTX) *DBTX {
 	if currentTX != nil {
 		fmt.Println("Transaction already in progress. Commit or abort the current transaction before starting a new one.")
-		return
+		return currentTX
 	}
-	currentTX = &DBTX{}
-	db.Begin(currentTX)
+
+	tx := &DBTX{}
+	db.Begin(tx)
 	fmt.Println("Transaction started.")
+	return tx
 }
 
-func HandleCommit(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
+func HandleCommit(scanner *bufio.Reader, db *DB, currentTX *DBTX) *DBTX {
 	if currentTX == nil {
 		fmt.Println("No active transaction to commit.")
-		return
+		return nil
 	}
+
 	if err := db.Commit(currentTX); err != nil {
 		fmt.Printf("Failed to commit transaction: %v\n", err)
-	} else {
-		fmt.Println("Transaction committed successfully.")
+		return currentTX
 	}
-	currentTX = nil
+
+	fmt.Println("Transaction committed successfully.")
+	return nil
 }
 
-func HandleAbort(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
+func HandleAbort(scanner *bufio.Reader, db *DB, currentTX *DBTX) *DBTX {
 	if currentTX == nil {
 		fmt.Println("No active transaction to abort.")
-		return
+		return nil
 	}
+
 	db.Abort(currentTX)
 	fmt.Println("Transaction aborted.")
-	currentTX = nil
+	return nil
 }

@@ -10,7 +10,7 @@ const (
 	INDEX_DEL = 2
 )
 
-func indexOp(db *DB, tdef *TableDef, rec Record, op int, kvtx *KVTX) {
+func indexOp(_ *DB, tdef *TableDef, rec Record, op int, kvtx *KVTX) {
 	key := make([]byte, 0, 256)
 	irec := make([]Value, len(rec.Cols))
 
