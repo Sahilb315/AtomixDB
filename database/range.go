@@ -64,28 +64,82 @@ func dbScan(db *DB, tdef *TableDef, req *Scanner, tree *BTree) error {
 	return nil
 }
 
-// within the range or not
 func (sc *Scanner) Valid() bool {
 	if !sc.iter.Valid() {
 		return false
 	}
 	key, _ := sc.iter.Deref()
-	result := cmpOK(key, sc.Cmp2, sc.keyEnd)
-	startRes := cmpOK(key, sc.Cmp1, sc.keyStart)
-	return result && startRes
+
+	// First check if we've reached the end of valid keys
+	if bytes.Compare(key, sc.keyEnd) > 0 {
+		return false
+	}
+
+	// Check if we're still within range
+	if bytes.Compare(key, sc.keyStart) < 0 {
+		return false
+	}
+
+	return true
 }
 
-// move the underlying B-tree iterator
 func (sc *Scanner) Next() {
-	if !sc.Valid() {
+	if !sc.iter.Valid() {
 		return
 	}
-	if sc.Cmp1 > 0 {
-		sc.iter.Next()
-	} else {
-		sc.iter.Prev()
+
+	currentKey, _ := sc.iter.Deref()
+	sc.iter.Next()
+
+	// If after moving Next(), we get the same key or invalid iterator,
+	// we've reached the end of valid data
+	if !sc.iter.Valid() {
+		return
+	}
+
+	nextKey, _ := sc.iter.Deref()
+	if bytes.Equal(currentKey, nextKey) {
+		// If we get the same key, invalidate iterator to stop
+		sc.iter = &BIter{}
+		return
 	}
 }
+
+// within the range or not
+// func (sc *Scanner) Valid() bool {
+// 	if !sc.iter.Valid() {
+// 		return false
+// 	}
+// 	key, _ := sc.iter.Deref()
+// 	if !cmpOK(key, sc.Cmp2, sc.keyEnd) {
+// 		return false
+// 	}
+// 	fmt.Println("Key from valid: ", (key))
+// 	result := cmpOK(key, sc.Cmp2, sc.keyEnd)
+// 	startRes := cmpOK(key, sc.Cmp1, sc.keyStart)
+// 	return result && startRes
+// }
+//
+// // move the underlying B-tree iterator
+// func (sc *Scanner) Next() {
+// 	if !sc.Valid() {
+// 		return
+// 	}
+//
+// 	key, _ := sc.iter.Deref()
+//
+// 	fmt.Println("Key from next: ", (key))
+// 	// Check if we've reached the end boundary
+// 	if !cmpOK(key, sc.Cmp2, sc.keyEnd) {
+// 		return
+// 	}
+//
+// 	if sc.Cmp1 > 0 {
+// 		sc.iter.Next()
+// 	} else {
+// 		sc.iter.Prev()
+// 	}
+// }
 
 // fetch the current row
 func (sc *Scanner) Deref(rec *Record, tree *BTree) {
@@ -203,7 +257,7 @@ func cmpOK(key []byte, cmp int, ref []byte) bool {
 	case CMP_LE:
 		return r <= 0
 	default:
-		panic("what?")
+		panic("wrong comparison")
 	}
 }
 

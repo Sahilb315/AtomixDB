@@ -9,17 +9,26 @@ import (
 
 type Command func(scanner *bufio.Reader, db *DB, currentTX *DBTX)
 
-type GetRequest struct {
+type QueryType int
+
+const (
+	SingleRecord QueryType = iota
+	RangeQuery
+)
+
+type QueryRequest struct {
 	tableName string
 	cols      []string
-	vals      []string
+	startVals []string
+	endVals   []string
+	queryType QueryType
 	response  chan GetResponse
 }
 
 type GetResponse struct {
-	record Record
-	found  bool
-	err    error
+	records []*Record
+	found   bool
+	err     error
 }
 
 func RegisterCommands() map[string]Command {
@@ -121,6 +130,90 @@ func HandleInsert(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	}
 }
 
+func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
+	responseChan := make(chan GetResponse, 1)
+
+	tableName := helper.GetTableName(scanner)
+
+	fmt.Println("\nSelect query type:")
+	fmt.Println("1. Single record lookup")
+	fmt.Println("2. Range query")
+	fmt.Print("Enter choice (1 or 2): ")
+
+	choice, _ := scanner.ReadString('\n')
+	choice = strings.TrimSpace(choice)
+
+	queryType := SingleRecord
+	if choice == "2" {
+		queryType = RangeQuery
+	}
+
+	if queryType == SingleRecord {
+		fmt.Print("\nEnter lookup column(s) - use comma if searching by composite index: ")
+	} else {
+		fmt.Print("\nEnter column name for lookup: ")
+	}
+	colStr, _ := scanner.ReadString('\n')
+	colStr = strings.TrimSpace(colStr)
+	splitCols := strings.Split(colStr, ",")
+
+	for i := range splitCols {
+		splitCols[i] = strings.TrimSpace(splitCols[i])
+	}
+
+	var startVals, endVals []string
+
+	if queryType == SingleRecord {
+		startVals = make([]string, 0, len(splitCols))
+		for _, col := range splitCols {
+			fmt.Printf("Enter value for %s: ", col)
+			val, _ := scanner.ReadString('\n')
+			startVals = append(startVals, strings.TrimSpace(val))
+		}
+	} else {
+		fmt.Println("\nEnter start range values:")
+		startVals = make([]string, 0, len(splitCols))
+		for _, col := range splitCols {
+			fmt.Printf("Enter start value for %s: ", col)
+			val, _ := scanner.ReadString('\n')
+			startVals = append(startVals, strings.TrimSpace(val))
+		}
+
+		fmt.Println("\nEnter end range values:")
+		endVals = make([]string, 0, len(splitCols))
+		for _, col := range splitCols {
+			fmt.Printf("Enter end value for %s: ", col)
+			val, _ := scanner.ReadString('\n')
+			endVals = append(endVals, strings.TrimSpace(val))
+		}
+	}
+
+	db.pool.Submit(func() {
+		req := QueryRequest{
+			tableName: tableName,
+			cols:      splitCols,
+			startVals: startVals,
+			endVals:   endVals,
+			queryType: queryType,
+			response:  responseChan,
+		}
+		processQueryRequest(req, db)
+	})
+
+	response := <-responseChan
+	if response.err != nil {
+		fmt.Println("\nError:", response.err)
+		return
+	}
+
+	if !response.found {
+		fmt.Println("\nNo records found")
+		return
+	}
+
+	printRecords(response.records)
+}
+
 func HandleDelete(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	tableName := helper.GetTableName(scanner)
 	rec := Record{
@@ -174,45 +267,6 @@ func HandleDelete(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 			db.kv.Abort(&writer)
 			fmt.Println("Failed to delete record.")
 		}
-	}
-}
-
-func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
-	responseChan := make(chan GetResponse, 1)
-
-	tableName := helper.GetTableName(scanner)
-
-	fmt.Printf("Enter primary key or index col: ")
-	colStr, _ := scanner.ReadString('\n')
-	colStr = strings.TrimSpace(colStr)
-	splitCol := strings.Split(colStr, ",")
-
-	vals := make([]string, 0)
-	for _, col := range splitCol {
-		fmt.Printf("Enter value for col %s: ", col)
-		valStr, _ := scanner.ReadString('\n')
-		vals = append(vals, strings.TrimSpace(valStr))
-	}
-
-	db.pool.Submit(func() {
-		req := GetRequest{
-			tableName: tableName,
-			cols:      splitCol,
-			vals:      vals,
-			response:  responseChan,
-		}
-		processGetRequest(req, db)
-	})
-
-	response := <-responseChan
-	if response.err != nil {
-		fmt.Println("Error:", response.err)
-		return
-	}
-	if response.found {
-		printRecord(response.record)
-	} else {
-		fmt.Println("Record not found")
 	}
 }
 
@@ -316,69 +370,187 @@ func HandleAbort(scanner *bufio.Reader, db *DB, currentTX *DBTX) *DBTX {
 	return nil
 }
 
-func processGetRequest(req GetRequest, db *DB) {
+func processQueryRequest(req QueryRequest, db *DB) {
 	var reader KVReader
 	db.kv.BeginRead(&reader)
-	tdef := GetTableDef(db, req.tableName, &reader.Tree)
-	db.kv.EndRead(&reader)
+	defer db.kv.EndRead(&reader)
 
+	tdef := GetTableDef(db, req.tableName, &reader.Tree)
 	if tdef == nil {
-		req.response <- GetResponse{err: fmt.Errorf("table '%s' not found", req.tableName)}
+		req.response <- GetResponse{
+			records: nil,
+			found:   false,
+			err:     fmt.Errorf("table '%s' not found", req.tableName),
+		}
 		return
 	}
 
 	if err := verifyColumns(tdef, req.cols); err != nil {
 		req.response <- GetResponse{
-			record: Record{},
-			found:  false,
-			err:    err,
+			records: nil,
+			found:   false,
+			err:     err,
 		}
 		return
 	}
-	rec := Record{
+
+	startRecord := Record{
 		Cols: make([]string, len(req.cols)),
 		Vals: make([]Value, len(req.cols)),
 	}
-
 	for i, col := range req.cols {
 		idx := ColIndex(tdef, col)
 		if tdef.Types[idx] == TYPE_BYTES {
-			rec.Vals[i] = Value{Type: TYPE_BYTES, Str: []byte(req.vals[i])}
+			startRecord.Vals[i] = Value{Type: TYPE_BYTES, Str: []byte(req.startVals[i])}
 		} else {
 			var key int64
-			fmt.Sscanf(req.vals[i], "%d", &key)
-			rec.Vals[i] = Value{Type: TYPE_INT64, I64: key}
+			fmt.Sscanf(req.startVals[i], "%d", &key)
+			startRecord.Vals[i] = Value{Type: TYPE_INT64, I64: key}
 		}
-		rec.Cols[i] = col
+		startRecord.Cols[i] = col
 	}
 
-	var kvReader KVReader
-	defer db.kv.EndRead(&kvReader)
-	db.kv.BeginRead(&kvReader)
+	if req.queryType == SingleRecord {
+		found, err := db.Get(req.tableName, &startRecord, &reader)
+		req.response <- GetResponse{
+			records: []*Record{&startRecord},
+			found:   found,
+			err:     err,
+		}
+		return
+	}
 
-	found, err := db.Get(req.tableName, &rec, &kvReader)
+	endRecord := Record{
+		Cols: make([]string, len(req.cols)),
+		Vals: make([]Value, len(req.cols)),
+	}
+	for i, col := range req.cols {
+		idx := ColIndex(tdef, col)
+		if tdef.Types[idx] == TYPE_BYTES {
+			endRecord.Vals[i] = Value{Type: TYPE_BYTES, Str: []byte(req.endVals[i])}
+		} else {
+			var key int64
+			fmt.Sscanf(req.endVals[i], "%d", &key)
+			endRecord.Vals[i] = Value{Type: TYPE_INT64, I64: key}
+		}
+		endRecord.Cols[i] = col
+	}
+
+	records, err := db.GetRange(req.tableName, &startRecord, &endRecord, &reader)
 	req.response <- GetResponse{
-		record: rec,
-		found:  found,
-		err:    err,
+		records: records,
+		found:   len(records) > 0,
+		err:     err,
 	}
 }
 
-func verifyColumns(tableDef *TableDef, userCols []string) error {
-	colMap := make(map[string]bool)
-	for _, col := range tableDef.Cols {
-		colMap[col] = true
+func verifyColumns(tdef *TableDef, cols []string) error {
+	for _, col := range cols {
+		found := false
+		for _, tableCol := range tdef.Cols {
+			if col == tableCol {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("column '%s' not found in table", col)
+		}
+	}
+	return nil
+}
+
+func formatValue(v Value) string {
+	switch v.Type {
+	case 1:
+		return fmt.Sprintf("%d", v.I64)
+	case 2:
+		return string(v.Str)
+	default:
+		return "Unknown"
+	}
+}
+
+func printRecord(record Record) {
+	if len(record.Cols) == 0 || len(record.Vals) == 0 {
+		fmt.Println("Empty record")
+		return
 	}
 
-	var invalidCols []string
-	for _, col := range userCols {
-		if !colMap[col] {
-			invalidCols = append(invalidCols, col)
+	colWidths := make([]int, len(record.Cols))
+	for i, col := range record.Cols {
+		colWidths[i] = len(col)
+		valWidth := len(formatValue(record.Vals[i]))
+		if valWidth > colWidths[i] {
+			colWidths[i] = valWidth
 		}
 	}
 
-	if len(invalidCols) > 0 {
-		return fmt.Errorf("invalid columns: %v", invalidCols)
+	fmt.Println(strings.Repeat("-", calculateTotalWidth(colWidths)))
+	for i, col := range record.Cols {
+		fmt.Printf("| %-*s ", colWidths[i], col)
 	}
-	return nil
+	fmt.Println("|")
+	fmt.Println(strings.Repeat("-", calculateTotalWidth(colWidths)))
+
+	for i, val := range record.Vals {
+		fmt.Printf("| %-*s ", colWidths[i], formatValue(val))
+	}
+	fmt.Println("|")
+	fmt.Println(strings.Repeat("-", calculateTotalWidth(colWidths)))
+}
+
+func calculateTotalWidth(colWidths []int) int {
+	total := 1
+	for _, width := range colWidths {
+		total += width + 3
+	}
+	return total
+}
+
+func printRecords(records []*Record) {
+	if len(records) == 0 {
+		fmt.Println("No records found")
+		return
+	}
+
+	colWidths := make([]int, len(records[0].Cols))
+	for _, record := range records {
+		for i, col := range record.Cols {
+
+			colWidths[i] = max(colWidths[i], len(col))
+
+			valWidth := len(formatValue(record.Vals[i]))
+			colWidths[i] = max(colWidths[i], valWidth)
+		}
+	}
+
+	border := "+"
+	for _, width := range colWidths {
+		border += strings.Repeat("-", width+2) + "+"
+	}
+
+	fmt.Println(border)
+	fmt.Print("|")
+	for i, col := range records[0].Cols {
+		fmt.Printf(" %-*s |", colWidths[i], col)
+	}
+	fmt.Println()
+	fmt.Println(border)
+
+	for _, record := range records {
+		fmt.Print("|")
+		for i, val := range record.Vals {
+			fmt.Printf(" %-*s |", colWidths[i], formatValue(val))
+		}
+		fmt.Println()
+	}
+	fmt.Println(border)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

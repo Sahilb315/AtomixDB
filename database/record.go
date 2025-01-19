@@ -150,6 +150,33 @@ func encodeKey(out []byte, prefix uint32, vals []Value) []byte {
 	return out
 }
 
+func dbGetRange(db *DB, tdef *TableDef, start *Record, end *Record, tree *BTree) ([]*Record, error) {
+	sc := Scanner{
+		Cmp1: CMP_GE,
+		Cmp2: CMP_LE,
+		Key1: *start,
+		Key2: *end,
+	}
+
+	if err := dbScan(db, tdef, &sc, tree); err != nil {
+		return nil, err
+	}
+
+	var results []*Record
+	for sc.Valid() {
+		rec := &Record{
+			Cols: make([]string, len(tdef.Cols)),
+			Vals: make([]Value, len(tdef.Cols)),
+		}
+		copy(rec.Cols, tdef.Cols)
+		sc.Deref(rec, tree)
+		results = append(results, rec)
+		sc.Next()
+	}
+
+	return results, nil
+}
+
 func encodeValues(out []byte, vals []Value) []byte {
 	for _, v := range vals {
 		switch v.Type {

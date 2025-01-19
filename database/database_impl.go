@@ -111,29 +111,3 @@ func shutdownDB(db *DB) {
 	fmt.Println("Exiting...")
 	os.Exit(0)
 }
-
-func formatValue(v Value) string {
-	switch v.Type {
-	case 1:
-		return fmt.Sprintf("%d", v.I64)
-	case 2:
-		return string(v.Str)
-	default:
-		return "Unknown Type"
-	}
-}
-
-func printRecord(record Record) {
-	headers := strings.Join(record.Cols, "\t")
-	fmt.Println(headers)
-
-	for i, val := range record.Vals {
-		formattedValue := formatValue(val)
-		if i == len(record.Vals)-1 {
-			fmt.Print(formattedValue)
-		} else {
-			fmt.Print(formattedValue + "\t")
-		}
-	}
-	fmt.Println()
-}

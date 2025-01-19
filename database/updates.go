@@ -128,6 +128,48 @@ func (db *DB) Get(table string, rec *Record, kvReader *KVReader) (bool, error) {
 	return dbGet(db, tdef, rec, &kvReader.Tree)
 }
 
+func (db *DB) GetRange(table string, start, end *Record, kvReader *KVReader) ([]*Record, error) {
+	tdef := GetTableDef(db, table, &kvReader.Tree)
+	if tdef == nil {
+		return nil, fmt.Errorf("table not found: %s", table)
+	}
+
+	var results []*Record
+	maxResults := 500 // Safety limit
+
+	sc := Scanner{
+		Cmp1: CMP_GE,
+		Cmp2: CMP_LE,
+		Key1: *start,
+		Key2: *end,
+	}
+
+	if err := dbScan(db, tdef, &sc, &kvReader.Tree); err != nil {
+		return nil, err
+	}
+
+	count := 0
+	for sc.Valid() && count < maxResults {
+		rec := &Record{
+			Cols: make([]string, len(tdef.Cols)),
+			Vals: make([]Value, len(tdef.Cols)),
+		}
+		copy(rec.Cols, tdef.Cols)
+
+		sc.Deref(rec, &kvReader.Tree)
+		results = append(results, rec)
+
+		sc.Next()
+		count++
+	}
+
+	if count >= maxResults {
+		return results, fmt.Errorf("reached maximum result limit")
+	}
+
+	return results, nil
+}
+
 func (db *DB) Insert(table string, rec Record, kvtx *KVTX) (bool, error) {
 	return db.Set(table, rec, MODE_INSERT_ONLY, kvtx)
 }
