@@ -105,42 +105,6 @@ func (sc *Scanner) Next() {
 	}
 }
 
-// within the range or not
-// func (sc *Scanner) Valid() bool {
-// 	if !sc.iter.Valid() {
-// 		return false
-// 	}
-// 	key, _ := sc.iter.Deref()
-// 	if !cmpOK(key, sc.Cmp2, sc.keyEnd) {
-// 		return false
-// 	}
-// 	fmt.Println("Key from valid: ", (key))
-// 	result := cmpOK(key, sc.Cmp2, sc.keyEnd)
-// 	startRes := cmpOK(key, sc.Cmp1, sc.keyStart)
-// 	return result && startRes
-// }
-//
-// // move the underlying B-tree iterator
-// func (sc *Scanner) Next() {
-// 	if !sc.Valid() {
-// 		return
-// 	}
-//
-// 	key, _ := sc.iter.Deref()
-//
-// 	fmt.Println("Key from next: ", (key))
-// 	// Check if we've reached the end boundary
-// 	if !cmpOK(key, sc.Cmp2, sc.keyEnd) {
-// 		return
-// 	}
-//
-// 	if sc.Cmp1 > 0 {
-// 		sc.iter.Next()
-// 	} else {
-// 		sc.iter.Prev()
-// 	}
-// }
-
 // fetch the current row
 func (sc *Scanner) Deref(rec *Record, tree *BTree) {
 	if !sc.Valid() {
