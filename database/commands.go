@@ -14,6 +14,7 @@ type QueryType int
 const (
 	SingleRecord QueryType = iota
 	RangeQuery
+	TableScan
 )
 
 type QueryRequest struct {
@@ -132,85 +133,108 @@ func HandleInsert(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 
 func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	responseChan := make(chan GetResponse, 1)
-
 	tableName := helper.GetTableName(scanner)
 
 	fmt.Println("\nSelect query type:")
-	fmt.Println("1. Single record lookup")
+	fmt.Println("1. Index lookup (primary/secondary key)")
 	fmt.Println("2. Range query")
-	fmt.Print("Enter choice (1 or 2): ")
+	fmt.Println("3. Column filter")
+	fmt.Print("Enter choice (1, 2 or 3): ")
 
 	choice, _ := scanner.ReadString('\n')
-	choice = strings.TrimSpace(choice)
-
 	queryType := SingleRecord
-	if choice == "2" {
+	switch strings.TrimSpace(choice) {
+	case "2":
 		queryType = RangeQuery
+	case "3":
+		queryType = TableScan
 	}
 
-	if queryType == SingleRecord {
-		fmt.Print("\nEnter lookup column(s) - use comma if searching by composite index: ")
-	} else {
-		fmt.Print("\nEnter column name for lookup: ")
-	}
-	colStr, _ := scanner.ReadString('\n')
-	colStr = strings.TrimSpace(colStr)
-	splitCols := strings.Split(colStr, ",")
-
-	for i := range splitCols {
-		splitCols[i] = strings.TrimSpace(splitCols[i])
-	}
-
-	var startVals, endVals []string
-
-	if queryType == SingleRecord {
-		startVals = make([]string, 0, len(splitCols))
-		for _, col := range splitCols {
-			fmt.Printf("Enter value for %s: ", col)
-			val, _ := scanner.ReadString('\n')
-			startVals = append(startVals, strings.TrimSpace(val))
+	if queryType == RangeQuery {
+		fmt.Print("\nEnter column name for range lookup: ")
+		colStr, _ := scanner.ReadString('\n')
+		cols := strings.Split(strings.TrimSpace(colStr), ",")
+		for i := range cols {
+			cols[i] = strings.TrimSpace(cols[i])
 		}
-	} else {
+
+		startVals := make([]string, 0, len(cols))
+		endVals := make([]string, 0, len(cols))
+
 		fmt.Println("\nEnter start range values:")
-		startVals = make([]string, 0, len(splitCols))
-		for _, col := range splitCols {
+		for _, col := range cols {
 			fmt.Printf("Enter start value for %s: ", col)
 			val, _ := scanner.ReadString('\n')
 			startVals = append(startVals, strings.TrimSpace(val))
 		}
 
 		fmt.Println("\nEnter end range values:")
-		endVals = make([]string, 0, len(splitCols))
-		for _, col := range splitCols {
+		for _, col := range cols {
 			fmt.Printf("Enter end value for %s: ", col)
 			val, _ := scanner.ReadString('\n')
 			endVals = append(endVals, strings.TrimSpace(val))
 		}
-	}
 
-	db.pool.Submit(func() {
-		req := QueryRequest{
-			tableName: tableName,
-			cols:      splitCols,
-			startVals: startVals,
-			endVals:   endVals,
-			queryType: queryType,
-			response:  responseChan,
+		db.pool.Submit(func() {
+			processQueryRequest(QueryRequest{
+				tableName: tableName,
+				cols:      cols,
+				startVals: startVals,
+				endVals:   endVals,
+				queryType: queryType,
+				response:  responseChan,
+			}, db)
+		})
+	} else if queryType == SingleRecord {
+		fmt.Print("\nEnter index column(s) (comma-separated for composite index): ")
+		colStr, _ := scanner.ReadString('\n')
+		cols := strings.Split(strings.TrimSpace(colStr), ",")
+		for i := range cols {
+			cols[i] = strings.TrimSpace(cols[i])
 		}
-		processQueryRequest(req, db)
-	})
+
+		startVals := make([]string, 0, len(cols))
+		for _, col := range cols {
+			fmt.Printf("Enter value for %s: ", col)
+			val, _ := scanner.ReadString('\n')
+			startVals = append(startVals, strings.TrimSpace(val))
+		}
+
+		db.pool.Submit(func() {
+			processQueryRequest(QueryRequest{
+				tableName: tableName,
+				cols:      cols,
+				startVals: startVals,
+				queryType: queryType,
+				response:  responseChan,
+			}, db)
+		})
+	} else {
+		fmt.Print("\nEnter column name for filter: ")
+		colStr, _ := scanner.ReadString('\n')
+		fmt.Print("Enter value: ")
+		valStr, _ := scanner.ReadString('\n')
+
+		db.pool.Submit(func() {
+			processQueryRequest(QueryRequest{
+				tableName: tableName,
+				cols:      []string{strings.TrimSpace(colStr)},
+				startVals: []string{strings.TrimSpace(valStr)},
+				queryType: queryType,
+				response:  responseChan,
+			}, db)
+		})
+	}
 
 	response := <-responseChan
 	if response.err != nil {
 		fmt.Println("\nError:", response.err)
 		return
 	}
-
 	if !response.found {
 		fmt.Println("\nNo records found")
 		return
 	}
-
 	printRecords(response.records)
 }
 
@@ -416,6 +440,25 @@ func processQueryRequest(req QueryRequest, db *DB) {
 			records: []*Record{&startRecord},
 			found:   found,
 			err:     err,
+		}
+		return
+	}
+
+	if req.queryType == TableScan {
+		result, err := db.QueryWithFilter(req.tableName, tdef, &startRecord)
+		if err != nil {
+			req.response <- GetResponse{
+				records: nil,
+				found:   false,
+				err:     err,
+			}
+			return
+		}
+
+		req.response <- GetResponse{
+			records: []*Record{result},
+			found:   true,
+			err:     nil,
 		}
 		return
 	}
