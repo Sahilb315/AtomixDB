@@ -212,14 +212,21 @@ func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	} else {
 		fmt.Print("\nEnter column name for filter: ")
 		colStr, _ := scanner.ReadString('\n')
-		fmt.Print("Enter value: ")
+		fmt.Print("Enter values(comma-separated for multiple values): ")
 		valStr, _ := scanner.ReadString('\n')
+
+		startVals := strings.Split(strings.TrimSpace(valStr), ",")
+		startCols := make([]string, len(startVals))
+		for i := range startVals {
+			startVals[i] = strings.TrimSpace(startVals[i])
+			startCols[i] = strings.TrimSpace(colStr)
+		}
 
 		db.pool.Submit(func() {
 			processQueryRequest(QueryRequest{
 				tableName: tableName,
-				cols:      []string{strings.TrimSpace(colStr)},
-				startVals: []string{strings.TrimSpace(valStr)},
+				cols:      startCols,
+				startVals: startVals,
 				queryType: queryType,
 				response:  responseChan,
 			}, db)
@@ -422,6 +429,7 @@ func processQueryRequest(req QueryRequest, db *DB) {
 		Cols: make([]string, len(req.cols)),
 		Vals: make([]Value, len(req.cols)),
 	}
+
 	for i, col := range req.cols {
 		idx := ColIndex(tdef, col)
 		if tdef.Types[idx] == TYPE_BYTES {
@@ -445,7 +453,7 @@ func processQueryRequest(req QueryRequest, db *DB) {
 	}
 
 	if req.queryType == TableScan {
-		result, err := db.QueryWithFilter(req.tableName, tdef, &startRecord)
+		results, err := db.QueryWithFilter(req.tableName, tdef, &startRecord)
 		if err != nil {
 			req.response <- GetResponse{
 				records: nil,
@@ -456,7 +464,7 @@ func processQueryRequest(req QueryRequest, db *DB) {
 		}
 
 		req.response <- GetResponse{
-			records: []*Record{result},
+			records: results,
 			found:   true,
 			err:     nil,
 		}

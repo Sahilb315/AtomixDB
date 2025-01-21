@@ -13,24 +13,52 @@ type TableScanner struct {
 	prefix   []byte
 }
 
-func (db *DB) QueryWithFilter(table string, tdef *TableDef, rec *Record) (*Record, error) {
+func (db *DB) QueryWithFilter(table string, tdef *TableDef, filterRec *Record) ([]*Record, error) {
 	results, err := fullTableScan(db, table, tdef)
 	if err != nil {
 		return nil, err
 	}
-	idx := ColIndex(tdef, rec.Cols[0])
-	if idx == -1 {
-		return nil, fmt.Errorf("column %s not found", rec.Cols[0])
-	}
 
+	idx := ColIndex(tdef, filterRec.Cols[0])
+	if idx == -1 {
+		return nil, fmt.Errorf("column %s not found", filterRec.Cols[0])
+	}
+	fmt.Println("Record: ", filterRec)
+	var matchingRecords []*Record
 	for _, record := range results {
-		if compareValues(record.Vals[idx], rec.Vals[0]) {
-			return record, nil
+		for _, filterVal := range filterRec.Vals {
+			if compareValues(record.Vals[idx], filterVal) {
+				matchingRecords = append(matchingRecords, record)
+				break // Found a match, move to next record
+			}
 		}
 	}
 
-	return nil, fmt.Errorf("no matching record found")
+	if len(matchingRecords) == 0 {
+		return nil, fmt.Errorf("no matching records found")
+	}
+
+	return matchingRecords, nil
 }
+
+// func (db *DB) QueryWithFilter(table string, tdef *TableDef, rec *Record) (*Record, error) {
+// 	results, err := fullTableScan(db, table, tdef)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	idx := ColIndex(tdef, rec.Cols[0])
+// 	if idx == -1 {
+// 		return nil, fmt.Errorf("column %s not found", rec.Cols[0])
+// 	}
+//
+// 	for _, record := range results {
+// 		if compareValues(record.Vals[idx], rec.Vals[0]) {
+// 			return record, nil
+// 		}
+// 	}
+//
+// 	return nil, fmt.Errorf("no matching record found")
+// }
 
 func NewTableScanner(db *DB, table string, kvReader *KVReader, tdef *TableDef) (*TableScanner, error) {
 	if tdef == nil {
