@@ -41,25 +41,6 @@ func (db *DB) QueryWithFilter(table string, tdef *TableDef, filterRec *Record) (
 	return matchingRecords, nil
 }
 
-// func (db *DB) QueryWithFilter(table string, tdef *TableDef, rec *Record) (*Record, error) {
-// 	results, err := fullTableScan(db, table, tdef)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	idx := ColIndex(tdef, rec.Cols[0])
-// 	if idx == -1 {
-// 		return nil, fmt.Errorf("column %s not found", rec.Cols[0])
-// 	}
-//
-// 	for _, record := range results {
-// 		if compareValues(record.Vals[idx], rec.Vals[0]) {
-// 			return record, nil
-// 		}
-// 	}
-//
-// 	return nil, fmt.Errorf("no matching record found")
-// }
-
 func NewTableScanner(db *DB, table string, kvReader *KVReader, tdef *TableDef) (*TableScanner, error) {
 	if tdef == nil {
 		return nil, fmt.Errorf("table definition not found")
