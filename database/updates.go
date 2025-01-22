@@ -63,7 +63,7 @@ func (db *DB) TableNew(tdef *TableDef, kvtx *KVTX) error {
 		}
 		tdef.Prefix = binary.LittleEndian.Uint32(meta.Get("val").Str)
 		if TABLE_PREFIX_MIN > tdef.Prefix {
-			return errors.New("Table prefix less than the min TABLE_PREFIX")
+			return errors.New("table prefix less than the min TABLE_PREFIX")
 		}
 	} else {
 		meta.AddStr("val", make([]byte, 4))

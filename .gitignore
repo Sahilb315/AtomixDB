@@ -24,5 +24,6 @@ go.work.sum
 # env file
 .env
 database.db
+atomixDB
 
 .vscode/

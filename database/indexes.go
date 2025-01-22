@@ -116,7 +116,7 @@ func checkIndexKeys(tdef *TableDef, index []string) ([]string, error) {
 		}
 	}
 	if len(index) >= len(tdef.Cols) {
-		return nil, errors.New("Index len should be shorter than columns")
+		return nil, errors.New("index len should be shorter than columns")
 	}
 	return index, nil
 }

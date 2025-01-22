@@ -139,9 +139,18 @@ func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	fmt.Println("1. Index lookup (primary/secondary key)")
 	fmt.Println("2. Range query")
 	fmt.Println("3. Column filter")
-	fmt.Print("Enter choice (1, 2 or 3): ")
+	var choice string
+	for {
+		fmt.Print("Enter choice (1, 2 or 3): ")
+		choice, _ = scanner.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+		if choice != "" {
+			break
+		} else {
+			fmt.Println("Please enter a valid choice!")
+		}
+	}
 
-	choice, _ := scanner.ReadString('\n')
 	queryType := SingleRecord
 	switch strings.TrimSpace(choice) {
 	case "2":
@@ -150,42 +159,34 @@ func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 		queryType = TableScan
 	}
 
-	if queryType == RangeQuery {
-		fmt.Print("\nEnter column name for range lookup: ")
+	switch queryType {
+	case RangeQuery:
+		fmt.Print("\nEnter column name for range lookup(index col): ")
 		colStr, _ := scanner.ReadString('\n')
-		cols := strings.Split(strings.TrimSpace(colStr), ",")
-		for i := range cols {
-			cols[i] = strings.TrimSpace(cols[i])
-		}
+		col := strings.TrimSpace(colStr)
 
-		startVals := make([]string, 0, len(cols))
-		endVals := make([]string, 0, len(cols))
+		startVals := make([]string, 0, 1)
+		endVals := make([]string, 0, 1)
 
-		fmt.Println("\nEnter start range values:")
-		for _, col := range cols {
-			fmt.Printf("Enter start value for %s: ", col)
-			val, _ := scanner.ReadString('\n')
-			startVals = append(startVals, strings.TrimSpace(val))
-		}
+		fmt.Print("\nEnter start range value: ")
+		val, _ := scanner.ReadString('\n')
+		startVals = append(startVals, strings.TrimSpace(val))
 
-		fmt.Println("\nEnter end range values:")
-		for _, col := range cols {
-			fmt.Printf("Enter end value for %s: ", col)
-			val, _ := scanner.ReadString('\n')
-			endVals = append(endVals, strings.TrimSpace(val))
-		}
+		fmt.Print("\nEnter end range value: ")
+		val, _ = scanner.ReadString('\n')
+		endVals = append(endVals, strings.TrimSpace(val))
 
 		db.pool.Submit(func() {
 			processQueryRequest(QueryRequest{
 				tableName: tableName,
-				cols:      cols,
+				cols:      []string{col},
 				startVals: startVals,
 				endVals:   endVals,
 				queryType: queryType,
 				response:  responseChan,
 			}, db)
 		})
-	} else if queryType == SingleRecord {
+	case SingleRecord:
 		fmt.Print("\nEnter index column(s) (comma-separated for composite index): ")
 		colStr, _ := scanner.ReadString('\n')
 		cols := strings.Split(strings.TrimSpace(colStr), ",")
@@ -209,7 +210,7 @@ func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 				response:  responseChan,
 			}, db)
 		})
-	} else {
+	default:
 		fmt.Print("\nEnter column name for filter: ")
 		colStr, _ := scanner.ReadString('\n')
 		fmt.Print("Enter values(comma-separated for multiple values): ")

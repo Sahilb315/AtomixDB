@@ -29,7 +29,7 @@ func (db *DB) QueryWithFilter(table string, tdef *TableDef, filterRec *Record) (
 		for _, filterVal := range filterRec.Vals {
 			if compareValues(record.Vals[idx], filterVal) {
 				matchingRecords = append(matchingRecords, record)
-				break // Found a match, move to next record
+				break 
 			}
 		}
 	}
