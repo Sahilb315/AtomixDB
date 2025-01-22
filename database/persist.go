@@ -52,7 +52,7 @@ func (rl ReaderList) Len() int {
 
 func (rl ReaderList) Less(i int, j int) bool {
 	if rl[i] == nil || rl[j] == nil {
-		return false // Handle nil pointers as needed
+		return false
 	}
 	return rl[i].index < rl[j].index
 }
@@ -122,16 +122,13 @@ func (db *KV) Open() error {
 	db.mmap.total = len(chunk)
 	db.mmap.chunks = [][]byte{chunk}
 
-	// init freelist
 	db.free = FreeListData{
 		head: 0,
 	}
-	// read the master page
 	err = masterLoad(db)
 	if err != nil {
 		goto fail
 	}
-	// process completed
 	return nil
 
 fail:
@@ -142,7 +139,6 @@ fail:
 func (db *KV) Close() {
 	for _, chunk := range db.mmap.chunks {
 		err := unmapFile(chunk)
-		// err := syscall.Munmap(chunk)
 		if err != nil {
 			fmt.Println("Error while closing DB")
 		}
@@ -254,7 +250,6 @@ func masterStore(db *KV) error {
 	binary.LittleEndian.PutUint64(data[16:24], db.page.flushed)
 	binary.LittleEndian.PutUint64(data[24:32], db.free.head)
 	// Pwrite ensures that updating the page is atomic
-	// _, err := syscall.Pwrite(int(db.fp.Fd()), data[:], 0)
 	_, err := pwriteFile(db.fp.Fd(), data[:], 0)
 	if err != nil {
 		return fmt.Errorf("write master page: %w", err)
@@ -279,7 +274,6 @@ func mmapInit(fp *os.File) (int, []byte, error) {
 
 	// maps the file data into the process's virtual address space
 	chunk, err := mmapFile(fp.Fd(), 0, mmapSize, PROT_READ|PROT_WRITE, MAP_SHARED)
-	// chunk, err := syscall.Mmap(int(fp.Fd()), 0, mmapSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	if err != nil {
 		return 0, nil, fmt.Errorf("mmap: %w", err)
 	}
@@ -293,7 +287,6 @@ func extendMmap(db *KV, npages int) error {
 	}
 
 	chunk, err := mmapFile(db.fp.Fd(), int64(db.mmap.total), db.mmap.total, PROT_READ|PROT_WRITE, MAP_SHARED)
-	// chunk, err := syscall.Mmap(int(db.fp.Fd()), int64(db.mmap.total), db.mmap.total, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	if err != nil {
 		return fmt.Errorf("mmap: %w", err)
 	}
@@ -318,7 +311,6 @@ func extendFile(db *KV, npages int) error {
 
 	fileSize := filePages * BTREE_PAGE_SIZE
 	err := fallocateFile(db.fp.Fd(), 0, 0)
-	// err := syscall.Fallocate(int(db.fp.Fd()), 0, 0, int64(fileSize))
 	if err != nil {
 		// Fallback to truncate
 		err = db.fp.Truncate(int64(fileSize))
