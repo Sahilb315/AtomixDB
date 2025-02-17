@@ -48,7 +48,7 @@ func (db *DB) TableNew(tdef *TableDef, kvtx *KVTX) error {
 		return fmt.Errorf("error checking table existence: %w", err)
 	}
 	if ok {
-		return fmt.Errorf("table already exists: %s", tdef.Name)
+		return fmt.Errorf("%w: %s", ErrTableAlreadyExists, tdef.Name)
 	}
 	tdef.Prefix = TABLE_PREFIX_MIN
 	meta := (&Record{}).AddStr("key", []byte("next_prefix"))
@@ -197,9 +197,12 @@ func dbDelete(db *DB, tdef *TableDef, rec Record, kvtx *KVTX) (bool, error) {
 	}
 	key := encodeKey(nil, tdef.Prefix, values[:tdef.PKeys])
 	req := DeleteReq{Key: key}
-	deleted, err := kvtx.Delete(&req)
-	if !deleted || err != nil || len(tdef.Indexes) == 0 {
-		return deleted, err
+	deleted, error := kvtx.Delete(&req)
+	if error != nil || !deleted || len(tdef.Indexes) == 0 {
+		return deleted, error
+	}
+	for i := tdef.PKeys; i <= len(tdef.Cols[tdef.PKeys:]); i++ {
+		values[i] = Value{Type: tdef.Types[i]}
 	}
 	if deleted {
 		decodeValues(req.Old, values[tdef.PKeys:])

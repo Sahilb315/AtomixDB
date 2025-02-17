@@ -42,7 +42,7 @@ func (kv *KV) BeginRead(tx *KVReader) {
 	tx.Tree.get = tx.pageGetMapped
 	tx.version = kv.version
 	heap.Push(&kv.readers, tx)
-	kv.mu.Unlock()
+    	kv.mu.Unlock()
 }
 
 func (kv *KV) EndRead(tx *KVReader) {
@@ -82,6 +82,35 @@ func (tx *DBTX) Delete(table string, rec Record) (bool, error) {
 
 func (tx *DBTX) Scan(table string, req *Scanner) error {
 	return tx.db.Scan(table, req, &tx.kv.Tree)
+}
+
+func (kv *KV) Begin(tx *KVTX) {
+	tx.kv = kv
+	tx.page.updates = map[uint64][]byte{}
+	tx.mmap.chunks = kv.mmap.chunks
+
+	kv.writer.Lock()
+	tx.version = kv.version
+	// btree
+	tx.Tree.root = kv.tree.root
+	tx.Tree.get = tx.pageGet
+	tx.Tree.new = tx.pageNew
+	tx.Tree.del = tx.pageDel
+
+	// freelist
+	tx.free.FreeListData = kv.free
+	tx.free.version = kv.version
+	tx.free.get = tx.pageGet
+	tx.free.new = tx.pageAppend
+	tx.free.use = tx.pageUse
+
+	tx.free.minReader = kv.version
+	kv.mu.Lock()
+
+	if len(kv.readers) > 0 {
+		tx.free.minReader = kv.readers[0].version
+	}
+	kv.mu.Unlock()
 }
 
 // end a transaction: commit updates

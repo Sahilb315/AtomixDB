@@ -78,35 +78,6 @@ func (rl *ReaderList) Pop() interface{} {
 // | sig | btree_root | page_used | free_list | version |
 // |  8B | 	   8B 	  | 	 8B	  |		8B	  |   8B    |
 
-func (kv *KV) Begin(tx *KVTX) {
-	tx.kv = kv
-	tx.page.updates = map[uint64][]byte{}
-	tx.mmap.chunks = kv.mmap.chunks
-
-	kv.writer.Lock()
-	tx.version = kv.version
-	// btree
-	tx.Tree.root = kv.tree.root
-	tx.Tree.get = tx.pageGet
-	tx.Tree.new = tx.pageNew
-	tx.Tree.del = tx.pageDel
-
-	// freelist
-	tx.free.FreeListData = kv.free
-	tx.free.version = kv.version
-	tx.free.get = tx.pageGet
-	tx.free.new = tx.pageAppend
-	tx.free.use = tx.pageUse
-
-	tx.free.minReader = kv.version
-	kv.mu.Lock()
-
-	if len(kv.readers) > 0 {
-		tx.free.minReader = kv.readers[0].version
-	}
-	kv.mu.Unlock()
-}
-
 func (db *KV) Open() error {
 	fp, err := os.OpenFile(db.Path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {

@@ -187,11 +187,11 @@ func encodeValues(out []byte, vals []Value) []byte {
 			out = append(out, buf[:]...)
 		case TYPE_BYTES:
 			if v.Str == nil {
-				out = append(out, 0) // Just null terminator for nil strings
+				out = append(out, 0)
 				continue
 			}
 			out = append(out, escapeString(v.Str)...)
-			out = append(out, 0) // null-terminated
+			out = append(out, 0)
 		default:
 			panic("invalid type while encodeValues")
 		}
@@ -283,7 +283,7 @@ func unEscapeString(in []byte) []byte {
 	i := 0
 	if in[0] == 0xfe {
 		if len(in) < 2 {
-			return in // Handle malformed input
+			return in
 		}
 		out[pos] = in[1]
 		pos++
@@ -330,7 +330,6 @@ func checkRecord(tdef *TableDef, rec Record, n int) ([]Value, error) {
 	return orderedValues, nil
 }
 
-// Helper functions
 func contains(slice []string, item string) bool {
 	for _, v := range slice {
 		if v == item {
@@ -346,5 +345,5 @@ func indexOf(slice []string, item string) int {
 			return i
 		}
 	}
-	return -1 // Return -1 if not found
+	return -1
 }

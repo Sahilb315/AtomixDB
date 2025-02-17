@@ -1,2 +1,2 @@
 # AtomixDB
-A minimal persistent database implementation in Go 
+A minimal persistent database implementation in Go

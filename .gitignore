@@ -27,3 +27,4 @@ database.db
 atomixDB
 
 .vscode/
+env*

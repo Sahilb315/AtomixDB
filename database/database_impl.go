@@ -3,6 +3,7 @@ package database
 import (
 	"atomixDB/database/helper"
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -29,27 +30,27 @@ func newDB() *DB {
 const fileName string = "database.db"
 
 func initializeInternalTables(db *DB) error {
-	var writer KVTX
-	db.kv.Begin(&writer)
-	if err := db.TableNew(TDEF_META, &writer); err != nil {
-		db.kv.Abort(&writer)
-		if !strings.Contains(err.Error(), "table exists") {
-			return fmt.Errorf("failed to create TDEF_META: %v", err)
+	tables := []*TableDef{TDEF_META, TDEF_TABLE}
+
+	for _, tableName := range tables {
+		var writer KVTX
+		db.kv.Begin(&writer)
+
+		if err := db.TableNew(tableName, &writer); err != nil {
+			db.kv.Abort(&writer)
+			if errors.Is(err, ErrTableAlreadyExists) {
+				fmt.Printf("%s already exists\n", tableName.Name)
+				continue
+			}
+			return fmt.Errorf("failed to create %s: %v", tableName.Name, err)
 		}
-		fmt.Println("TDEF_META already exists")
+		db.kv.Commit(&writer)
 	}
-	db.kv.Commit(&writer)
-	db.kv.Begin(&writer)
-	if err := db.TableNew(TDEF_TABLE, &writer); err != nil {
-		db.kv.Abort(&writer)
-		if !strings.Contains(err.Error(), "table exists") {
-			return fmt.Errorf("failed to create TDEF_TABLE: %v", err)
-		}
-		fmt.Println("TDEF_TABLE already exists")
-	}
-	db.kv.Commit(&writer)
+
 	return nil
 }
+
+var ErrTableAlreadyExists error = errors.New("table already exists")
 
 func StartDB() {
 	scanner := bufio.NewReader(os.Stdin)
@@ -59,7 +60,7 @@ func StartDB() {
 	}
 	err := initializeInternalTables(db)
 	if err != nil {
-		if !strings.Contains(err.Error(), "table already exists") {
+		if !errors.Is(err, ErrTableAlreadyExists) {
 			fmt.Println("Error while init table: ", err)
 			os.Exit(0)
 		}
