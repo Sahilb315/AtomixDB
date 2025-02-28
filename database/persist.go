@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-const DB_SIG = "AtmoixDB"
+const DB_SIG = "AtomixDB"
 
 const (
 	PROT_READ  = 0x1
