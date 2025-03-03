@@ -42,6 +42,9 @@ func RegisterCommands() map[string]Command {
 		"begin":  func(scanner *bufio.Reader, db *DB, currentTX *DBTX) {},
 		"abort":  func(scanner *bufio.Reader, db *DB, currentTX *DBTX) {},
 		"commit": func(scanner *bufio.Reader, db *DB, currentTX *DBTX) {},
+		"help": func(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
+			helper.PrintWelcomeMessage(false)
+		},
 	}
 }
 
@@ -93,21 +96,33 @@ func HandleInsert(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	}
 
 	for i, col := range tdef.Cols {
-		fmt.Printf("Enter value for %s: ", col)
-		valStr, _ := scanner.ReadString('\n')
-		valStr = strings.TrimSpace(valStr)
-
 		var val Value
-		if tdef.Types[i] == TYPE_BYTES {
-			val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
-		} else {
-			var key int64
-			fmt.Sscanf(valStr, "%d", &key)
-			val = Value{Type: TYPE_INT64, I64: key}
+		isValidInput := false
+
+		for !isValidInput {
+			fmt.Printf("Enter value for %s: ", col)
+			valStr, _ := scanner.ReadString('\n')
+			valStr = strings.TrimSpace(valStr)
+
+			if tdef.Types[i] == TYPE_BYTES {
+				val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+				isValidInput = true
+			} else if tdef.Types[i] == TYPE_INT64 {
+				var key int64
+				_, err := fmt.Sscanf(valStr, "%d", &key)
+				if err == nil {
+					val = Value{Type: TYPE_INT64, I64: key}
+					isValidInput = true
+				} else {
+					fmt.Printf("Invalid input. Please enter again:\n")
+				}
+			}
 		}
+
 		rec.Cols = append(rec.Cols, col)
 		rec.Vals = append(rec.Vals, val)
 	}
+
 	if currentTX != nil {
 		if inserted, err := currentTX.Set(tableName, rec, MODE_INSERT_ONLY); err != nil {
 			fmt.Println("Failed to insert: ", err.Error())
@@ -118,6 +133,8 @@ func HandleInsert(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 		}
 	} else {
 		db.kv.Begin(&writer)
+		fmt.Println("Record to be inserted: ")
+		printRecord(rec)
 		if inserted, err := db.Insert(tableName, rec, &writer); err != nil {
 			db.kv.Abort(&writer)
 			fmt.Println("Failed to insert: ", err.Error())
@@ -136,7 +153,7 @@ func HandleGet(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 	tableName := helper.GetTableName(scanner)
 
 	fmt.Println("\nSelect query type:")
-	fmt.Println("1. Index lookup (primary/secondary key)")
+	fmt.Println("1. Index lookup (primary/secondary index)")
 	fmt.Println("2. Range query")
 	fmt.Println("3. Column filter")
 	var choice string
@@ -263,19 +280,30 @@ func HandleDelete(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 		return
 	}
 
-	for i, col := range tdef.Cols[:tdef.PKeys] {
-		fmt.Printf("Enter value for %s (primary key): ", col)
-		valStr, _ := scanner.ReadString('\n')
-		valStr = strings.TrimSpace(valStr)
-
+	for i, col := range tdef.Cols {
 		var val Value
-		if tdef.Types[i] == TYPE_BYTES {
-			val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
-		} else {
-			var key int64
-			fmt.Sscanf(valStr, "%d", &key)
-			val = Value{Type: TYPE_INT64, I64: key}
+		isValidInput := false
+
+		for !isValidInput {
+			fmt.Printf("Enter value for %s: ", col)
+			valStr, _ := scanner.ReadString('\n')
+			valStr = strings.TrimSpace(valStr)
+
+			if tdef.Types[i] == TYPE_BYTES {
+				val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+				isValidInput = true
+			} else if tdef.Types[i] == TYPE_INT64 {
+				var key int64
+				_, err := fmt.Sscanf(valStr, "%d", &key)
+				if err == nil {
+					val = Value{Type: TYPE_INT64, I64: key}
+					isValidInput = true
+				} else {
+					fmt.Printf("Invalid input. Please enter again:\n")
+				}
+			}
 		}
+
 		rec.Cols = append(rec.Cols, col)
 		rec.Vals = append(rec.Vals, val)
 	}
@@ -320,27 +348,38 @@ func HandleUpdate(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 		fmt.Printf("Table '%s' not found.\n", tableName)
 		return
 	}
-
 	for i, col := range tdef.Cols {
 		if i == 0 {
 			fmt.Printf("Enter primary key for %s: ", col)
 		} else {
 			fmt.Printf("Enter value for %s: ", col)
 		}
-		valStr, _ := scanner.ReadString('\n')
-		valStr = strings.TrimSpace(valStr)
-
 		var val Value
-		if tdef.Types[i] == TYPE_BYTES {
-			val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
-		} else {
-			var key int64
-			fmt.Sscanf(valStr, "%d", &key)
-			val = Value{Type: TYPE_INT64, I64: key}
+		isValidInput := false
+
+		for !isValidInput {
+			valStr, _ := scanner.ReadString('\n')
+			valStr = strings.TrimSpace(valStr)
+
+			if tdef.Types[i] == TYPE_BYTES {
+				val = Value{Type: TYPE_BYTES, Str: []byte(valStr)}
+				isValidInput = true
+			} else if tdef.Types[i] == TYPE_INT64 {
+				var key int64
+				_, err := fmt.Sscanf(valStr, "%d", &key)
+				if err == nil {
+					val = Value{Type: TYPE_INT64, I64: key}
+					isValidInput = true
+				} else {
+					fmt.Printf("Invalid input. Please enter again: ")
+				}
+			}
 		}
+
 		rec.Cols = append(rec.Cols, col)
 		rec.Vals = append(rec.Vals, val)
 	}
+
 	if currentTX != nil {
 		if updated, err := currentTX.Set(tableName, rec, MODE_UPDATE_ONLY); err != nil {
 			fmt.Println("Error while updating: ", err.Error())
@@ -461,7 +500,7 @@ func processQueryRequest(req QueryRequest, db *DB) {
 				found:   false,
 				err:     err,
 			}
-			return
+
 		}
 
 		req.response <- GetResponse{

@@ -59,8 +59,10 @@ func GetTableName(scanner *bufio.Reader) string {
 	return name
 }
 
-func PrintWelcomeMessage() {
-	fmt.Println("Welcome to AtomixDB")
+func PrintWelcomeMessage(isWelcome bool) {
+	if isWelcome {
+		fmt.Println("Welcome to AtomixDB")
+	}
 	fmt.Println("Available Commands:")
 	fmt.Println("  CREATE       - Create a new table")
 	fmt.Println("  INSERT       - Add a record to a table")
@@ -70,6 +72,7 @@ func PrintWelcomeMessage() {
 	fmt.Println("  BEGIN        - Begin new transaction")
 	fmt.Println("  COMMIT       - Commit transaction")
 	fmt.Println("  ABORT        - Rollback transaction")
+	fmt.Println("  HELP         - List all commands")
 	fmt.Println("  EXIT         - Exit the program")
 	fmt.Println()
 }

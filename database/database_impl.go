@@ -39,7 +39,6 @@ func initializeInternalTables(db *DB) error {
 		if err := db.TableNew(tableName, &writer); err != nil {
 			db.kv.Abort(&writer)
 			if errors.Is(err, ErrTableAlreadyExists) {
-				fmt.Printf("%s already exists\n", tableName.Name)
 				continue
 			}
 			return fmt.Errorf("failed to create %s: %v", tableName.Name, err)
@@ -75,7 +74,7 @@ func StartDB() {
 
 	commands := RegisterCommands()
 	var currentTX *DBTX
-	helper.PrintWelcomeMessage()
+	helper.PrintWelcomeMessage(true)
 
 	for {
 		fmt.Print("> ")

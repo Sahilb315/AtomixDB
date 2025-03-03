@@ -42,7 +42,7 @@ func (kv *KV) BeginRead(tx *KVReader) {
 	tx.Tree.get = tx.pageGetMapped
 	tx.version = kv.version
 	heap.Push(&kv.readers, tx)
-    	kv.mu.Unlock()
+	kv.mu.Unlock()
 }
 
 func (kv *KV) EndRead(tx *KVReader) {

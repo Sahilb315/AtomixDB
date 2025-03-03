@@ -3,6 +3,7 @@ package database
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 )
 
 type BNode struct {
@@ -30,9 +31,12 @@ type BTree struct {
 	del func(uint64)       // de-allocate the page
 }
 
-func (tree *BTree) Insert(key, val []byte) {
-	if len(key) == 0 || len(key) > BTREE_MAX_KEY_SIZE || len(val) > BTREE_MAX_VAL_SIZE {
-		return
+func (tree *BTree) Insert(key, val []byte) error {
+	if len(key) == 0 || len(key) > BTREE_MAX_KEY_SIZE {
+		return errors.New("key size not valid")
+	}
+	if len(val) > BTREE_MAX_VAL_SIZE {
+		return errors.New("val size exceeds the max size")
 	}
 
 	if tree.root == 0 {
@@ -43,7 +47,7 @@ func (tree *BTree) Insert(key, val []byte) {
 		nodeAppendKV(root, 0, 0, nil, nil)
 		nodeAppendKV(root, 1, 0, key, val)
 		tree.root = tree.new(root)
-		return
+		return nil
 	}
 	node := tree.get(tree.root)
 	tree.del(tree.root)
@@ -62,6 +66,7 @@ func (tree *BTree) Insert(key, val []byte) {
 	} else {
 		tree.root = tree.new(splitted[0])
 	}
+	return nil
 }
 
 func (tree *BTree) Delete(key []byte) bool {
@@ -84,12 +89,13 @@ func (tree *BTree) Delete(key []byte) bool {
 	return true
 }
 
-func (tree *BTree) Get(key []byte) ([]byte, bool) {
-	assert(len(key) != 0)
-	assert(len(key) <= BTREE_MAX_KEY_SIZE)
+func (tree *BTree) Get(key []byte) ([]byte, bool, error) {
+	if len(key) == 0 || len(key) > BTREE_MAX_KEY_SIZE {
+		return nil, false, errors.New("key size is not valid")
+	}
 
 	if tree.root == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	node := tree.get(tree.root)
 	for {
@@ -97,9 +103,9 @@ func (tree *BTree) Get(key []byte) ([]byte, bool) {
 		case BNODE_LEAF:
 			idx := nodeLookupLE(node, key)
 			if bytes.Equal(node.getKey(idx), key) {
-				return node.getVal(idx), true
+				return node.getVal(idx), true, nil
 			}
-			return nil, false
+			return nil, false, nil
 		case BNODE_INODE:
 			idx := nodeLookupLE(node, key)
 			node = tree.get(node.getPtr(idx))

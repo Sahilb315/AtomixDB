@@ -216,6 +216,10 @@ func dbUpdate(db *DB, tdef *TableDef, rec Record, mode int, kvtx *KVTX) (bool, e
 	if err != nil {
 		return false, err
 	}
+	isTableValid := validateTableTypes(tdef, rec)
+	if !isTableValid {
+		return false, errors.New("invalid type")
+	}
 	key := encodeKey(nil, tdef.Prefix, values[:tdef.PKeys])
 	vals := encodeValues(nil, values[tdef.PKeys:])
 	req := InsertReq{Key: key, Value: vals, Mode: mode}
@@ -242,8 +246,8 @@ func (tree *BTree) DeleteEx(req *DeleteReq) bool {
 	}
 
 	// Check if the key already exists
-	key, exists := tree.Get(req.Key)
-	if !exists {
+	key, exists, err := tree.Get(req.Key)
+	if err != nil || !exists {
 		return false
 	}
 	isDeleted := tree.Delete(key)
@@ -259,7 +263,10 @@ func (tree *BTree) InsertEx(req *InsertReq) {
 	}
 
 	// Check if the key already exists
-	_, exists := tree.Get(req.Key)
+	_, exists, err := tree.Get(req.Key)
+	if err != nil {
+		return
+	}
 
 	switch req.Mode {
 	case MODE_UPSERT:
@@ -286,17 +293,20 @@ func (tree *BTree) InsertEx(req *InsertReq) {
 func (db *KVTX) SetWithMode(req *InsertReq) (bool, error) {
 	switch req.Mode {
 	case MODE_UPDATE_ONLY:
-		old, exists := db.Get(req.Key)
+		old, exists, err := db.Get(req.Key)
+		if err != nil {
+			return false, err
+		}
 		if exists {
 			err := db.Set(req.Key, req.Value)
 			req.Updated = true
 			req.Old = old
 			return true, err
 		}
-		return false, errors.New("record does not exist")
+		return false, errors.New("record not found")
 
 	case MODE_UPSERT:
-		old, exists := db.Get(req.Key)
+		old, exists, _ := db.Get(req.Key)
 		if exists {
 			req.Old = old
 		}
@@ -305,7 +315,10 @@ func (db *KVTX) SetWithMode(req *InsertReq) (bool, error) {
 		return true, err
 
 	case MODE_INSERT_ONLY:
-		_, exists := db.Get(req.Key)
+		_, exists, err := db.Get(req.Key)
+		if err != nil {
+			return false, err
+		}
 		if !exists {
 			err := db.Set(req.Key, req.Value)
 			req.Added = true
@@ -359,4 +372,13 @@ func tableDefCheck(tdef *TableDef) error {
 
 func isValidTableName(name string) bool {
 	return regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(name)
+}
+
+func validateTableTypes(tdef *TableDef, rec Record) bool {
+	for i := range rec.Cols {
+		if rec.Vals[i].Type != tdef.Types[i] {
+			return false
+		}
+	}
+	return true
 }

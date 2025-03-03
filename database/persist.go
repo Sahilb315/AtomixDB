@@ -117,7 +117,7 @@ func (db *KV) Close() {
 	_ = db.fp.Close()
 }
 
-func (db *KVTX) Get(key []byte) ([]byte, bool) {
+func (db *KVTX) Get(key []byte) ([]byte, bool, error) {
 	return db.Tree.Get(key)
 }
 
@@ -127,7 +127,12 @@ func (db *KVTX) Set(key, val []byte) error {
 }
 
 func (db *KVTX) Delete(req *DeleteReq) (bool, error) {
-	val, _ := db.Get(req.Key)
+	val, _, err := db.Get(req.Key)
+	if err != nil {
+		return false, err
+	} else if len(val) == 0 {
+		return false, errors.New("record not found")
+	}
 	deleted := db.Tree.Delete(req.Key)
 	if deleted {
 		req.Old = val
