@@ -133,8 +133,6 @@ func HandleInsert(scanner *bufio.Reader, db *DB, currentTX *DBTX) {
 		}
 	} else {
 		db.kv.Begin(&writer)
-		fmt.Println("Record to be inserted: ")
-		printRecord(rec)
 		if inserted, err := db.Insert(tableName, rec, &writer); err != nil {
 			db.kv.Abort(&writer)
 			fmt.Println("Failed to insert: ", err.Error())
