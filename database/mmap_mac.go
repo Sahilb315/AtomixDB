@@ -1,8 +1,12 @@
-//go:build linux || freebsd || openbsd || netbsd || solaris
+//go:build darwin
 
 package database
 
-import "syscall"
+import (
+	"syscall"
+
+	"golang.org/x/sys/unix"
+)
 
 func mmapFile(fd uintptr, offset int64, length int, prot, flags int) ([]byte, error) {
 	return syscall.Mmap(int(fd), offset, length, prot, flags)
@@ -13,7 +17,9 @@ func unmapFile(data []byte) error {
 }
 
 func fallocateFile(fd uintptr, offset int64, length int64) error {
-	return syscall.Fallocate(int(fd), 0, offset, length)
+	// use mmap let file map to memory
+	_, err := unix.Mmap(int(fd), 0, int(offset+length), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+	return err
 }
 
 func pwriteFile(fd uintptr, data []byte, offset int64) (int, error) {
