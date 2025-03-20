@@ -18,7 +18,7 @@ Main focus was on implementing & understanding working the of database, storage 
 
 - [Golang](https://golang.org/dl/) (version 1.17 or later)
 - [Git](https://git-scm.com/downloads)
-- Linux operating system. AtomixDB has been developed and tested on systems like NixOS.
+- Linux or MacOS. AtomixDB has been developed and tested on NixOS.
 
 ### Clone the Repository
 
