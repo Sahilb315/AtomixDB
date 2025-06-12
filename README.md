@@ -1,4 +1,4 @@
-\# Overview
+# Overview
 
 AtomixDB is an mini relational database fully written in Go.
 Main focus was on implementing & understanding working the of database, storage management & transaction handling.
