@@ -16,7 +16,7 @@ Main focus was on implementing & understanding working the of database, storage 
 
 ### Prerequisites
 
-- [Golang](https://golang.org/dl/) (version 1.17 or later)
+- [Golang](https://golang.org/dl/) (version 1.23 or later)
 - [Git](https://git-scm.com/downloads)
 - Linux or MacOS. AtomixDB has been developed and tested on NixOS.
 
