@@ -1,7 +1,8 @@
 # Overview
 
-AtomixDB is an mini relational database fully written in Go.
-Main focus was on implementing & understanding working the of database, storage management & transaction handling.
+AtomixDB is a lightweight relational database built entirely in Go, focused on implementing and understanding core database internals such as storage management and transaction handling. 
+
+> Query processing is planned and listed as an upcoming feature.
 
 ## Table of Contents
 
